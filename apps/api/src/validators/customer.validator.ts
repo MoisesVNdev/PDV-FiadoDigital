@@ -1,12 +1,17 @@
 import { z } from "zod";
 import type { Request, Response, NextFunction } from "express";
 
-const createCustomerSchema = z.object({
-  name: z.string().min(2).max(200),
+const customerBaseSchema = z.object({
+  name: z.string().min(2).max(100),
   phone: z.string().max(20).optional(),
   email: z.string().email().max(200).optional(),
   credit_limit_cents: z.number().int().nonnegative(),
+  payment_due_day: z.number().int().min(1).max(31).optional(),
+  is_active: z.boolean().optional(),
 });
+
+const createCustomerSchema = customerBaseSchema;
+const updateCustomerSchema = customerBaseSchema.partial();
 
 export function validateCreateCustomer(
   req: Request,
@@ -14,6 +19,25 @@ export function validateCreateCustomer(
   next: NextFunction,
 ): void {
   const result = createCustomerSchema.safeParse(req.body);
+
+  if (!result.success) {
+    res.status(400).json({
+      success: false,
+      message: "Dados inválidos",
+      errors: result.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  next();
+}
+
+export function validateUpdateCustomer(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  const result = updateCustomerSchema.safeParse(req.body);
 
   if (!result.success) {
     res.status(400).json({

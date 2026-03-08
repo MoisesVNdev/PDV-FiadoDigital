@@ -47,7 +47,9 @@ model Customer {
   email             String?
   credit_limit_cents Int      @default(0)
   current_debt_cents Int      @default(0)
+  payment_due_day   Int?
   credit_blocked    Boolean   @default(false)
+  is_active         Boolean   @default(true)
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
   deleted_at        DateTime?

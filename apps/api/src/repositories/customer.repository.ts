@@ -18,6 +18,8 @@ export class CustomerRepository {
     phone?: string;
     email?: string;
     credit_limit_cents: number;
+    payment_due_day?: number;
+    is_active?: boolean;
   }) {
     return prisma.customer.create({ data });
   }
