@@ -8,9 +8,10 @@ type NavItem = { label: string; to: string; roles: string[] };
 
 const navItems: NavItem[] = [
   { label: "Dashboard", to: "/", roles: ["admin", "manager"] },
-  { label: "Vendas", to: "/sales", roles: ["admin", "manager", "operator"] },
-  { label: "Produtos", to: "/products", roles: ["admin", "manager", "stockist"] },
+  { label: "Vendas", to: "/sales", roles: ["admin", "manager", "caixa"] },
+  { label: "Produtos", to: "/products", roles: ["admin", "manager", "estoquista"] },
   { label: "Clientes", to: "/customers", roles: ["admin", "manager"] },
+  { label: "Funcionários", to: "/employees", roles: ["admin", "manager"] },
 ];
 
 const visibleItems = computed(() =>

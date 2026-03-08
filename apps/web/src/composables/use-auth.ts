@@ -1,5 +1,17 @@
 import { useAuthStore } from "@/stores/auth.store.js";
 import { useRouter } from "vue-router";
+import { ROLES } from "@pdv/shared";
+import type { Role } from "@pdv/shared";
+
+function getDefaultRouteByRole(role: Role): string {
+  const roleRoutes: Record<Role, string> = {
+    [ROLES.ADMIN]: "dashboard",
+    [ROLES.MANAGER]: "dashboard",
+    [ROLES.STOCKIST]: "products",
+    [ROLES.OPERATOR]: "sales",
+  };
+  return roleRoutes[role] || "dashboard";
+}
 
 export function useAuth() {
   const auth = useAuthStore();
@@ -20,6 +32,10 @@ export function useAuth() {
     }
 
     auth.setAuth(data.data.accessToken, data.data.user);
+
+    // Redirecionar ao cargo do usuário
+    const defaultRoute = getDefaultRouteByRole(data.data.user.role);
+    router.push({ name: defaultRoute });
   }
 
   async function logout(): Promise<void> {

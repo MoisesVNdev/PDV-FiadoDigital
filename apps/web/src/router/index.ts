@@ -39,6 +39,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import("@/pages/customers-page.vue"),
     meta: { requiresAuth: true, roles: ["admin", "manager"] },
   },
+  {
+    path: "/employees",
+    name: "employees",
+    component: () => import("@/pages/employees-page.vue"),
+    meta: { requiresAuth: true, roles: ["admin", "manager"] },
+  },
 ];
 
 export const router = createRouter({

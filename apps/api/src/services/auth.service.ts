@@ -41,7 +41,7 @@ export class AuthService {
 
   async refresh(
     refreshToken: string,
-  ): Promise<{ accessToken: string; refreshToken: string }> {
+  ): Promise<{ accessToken: string; refreshToken: string; user: { id: string; name: string; username: string; role: string } }> {
     const payload = jwt.verify(refreshToken, config.jwt.refreshSecret) as {
       sub: string;
     };
@@ -55,7 +55,11 @@ export class AuthService {
     const newAccessToken = this.generateAccessToken(user.id, user.role);
     const newRefreshToken = this.generateRefreshToken(user.id);
 
-    return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+    return { 
+      accessToken: newAccessToken, 
+      refreshToken: newRefreshToken,
+      user: { id: user.id, name: user.name, username: user.username, role: user.role },
+    };
   }
 
   private generateAccessToken(userId: string, role: string): string {

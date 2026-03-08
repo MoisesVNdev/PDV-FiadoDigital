@@ -3,9 +3,9 @@ import type { Request, Response, NextFunction } from "express";
 import { ROLES } from "@pdv/shared";
 
 const createUserSchema = z.object({
-  name: z.string().min(2).max(100),
+  name: z.string().min(2).max(50),
   username: z.string().min(3).max(50),
-  password: z.string().min(6).max(128),
+  password: z.string().regex(/^\d{6}$/, "Senha deve conter exatamente 6 dígitos numéricos"),
   role: z.enum([ROLES.ADMIN, ROLES.MANAGER, ROLES.STOCKIST, ROLES.OPERATOR]),
 });
 
