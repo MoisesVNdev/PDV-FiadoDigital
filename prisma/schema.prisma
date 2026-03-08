@@ -1,0 +1,205 @@
+// ===========================================
+// PDV FiadoDigital — Prisma Schema
+// ===========================================
+// SQLite com WAL mode obrigatório.
+// Valores monetários em centavos (Int).
+// Soft delete (deleted_at) em todas as entidades exceto AuditLog.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ------------------------------------------
+// User — Operadores, gerentes, estoquistas
+// ------------------------------------------
+model User {
+  id            String    @id @default(uuid())
+  name          String
+  username      String    @unique
+  password_hash String
+  pin_hash      String?
+  role          String    // admin | manager | stockist | operator
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+  deleted_at    DateTime?
+
+  sales          Sale[]
+  cash_registers CashRegister[]
+  audit_logs     AuditLog[]     @relation("AuditActor")
+
+  @@index([username])
+  @@index([role])
+  @@map("user")
+}
+
+// ------------------------------------------
+// Customer — Clientes com controle de fiado
+// ------------------------------------------
+model Customer {
+  id                String    @id @default(uuid())
+  name              String
+  phone             String?
+  email             String?
+  credit_limit_cents Int      @default(0)
+  current_debt_cents Int      @default(0)
+  credit_blocked    Boolean   @default(false)
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+  deleted_at        DateTime?
+
+  sales Sale[]
+
+  @@index([name])
+  @@map("customer")
+}
+
+// ------------------------------------------
+// Product — Catálogo de produtos
+// ------------------------------------------
+model Product {
+  id              String    @id @default(uuid())
+  name            String
+  barcode         String?   @unique
+  description     String?
+  price_cents     Int
+  cost_price_cents Int
+  stock_quantity  Int       @default(0)
+  min_stock_alert Int       @default(5)
+  is_active       Boolean   @default(true)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  deleted_at      DateTime?
+
+  sale_items SaleItem[]
+
+  @@index([barcode])
+  @@index([name])
+  @@map("product")
+}
+
+// ------------------------------------------
+// Sale — Vendas (UUID v7 para idempotência)
+// ------------------------------------------
+model Sale {
+  id             String    @id @default(uuid())
+  uuid           String    @unique
+  operator_id    String
+  customer_id    String?
+  terminal_id    String
+  payment_method String    // cash | pix | credit_card | debit_card | fiado | mixed
+  subtotal_cents Int
+  discount_cents Int       @default(0)
+  total_cents    Int
+  status         String    @default("completed") // pending | completed | cancelled | refunded
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+  deleted_at     DateTime?
+
+  operator     User       @relation(fields: [operator_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  customer     Customer?  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  items        SaleItem[]
+  transactions Transaction[]
+
+  @@index([uuid])
+  @@index([operator_id])
+  @@index([customer_id])
+  @@index([terminal_id])
+  @@index([created_at])
+  @@map("sale")
+}
+
+// ------------------------------------------
+// SaleItem — Itens da venda (snapshot de preço)
+// ------------------------------------------
+model SaleItem {
+  id               String @id @default(uuid())
+  sale_id          String
+  product_id       String
+  quantity         Int
+  unit_price_cents Int    // Snapshot do preço no ato da venda
+  discount_cents   Int    @default(0)
+  total_cents      Int
+
+  sale    Sale    @relation(fields: [sale_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  product Product @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([sale_id])
+  @@index([product_id])
+  @@map("sale_item")
+}
+
+// ------------------------------------------
+// CashRegister — Abertura e fechamento de caixa
+// ------------------------------------------
+model CashRegister {
+  id                    String    @id @default(uuid())
+  operator_id           String
+  terminal_id           String
+  opening_balance_cents Int
+  closing_balance_cents Int?
+  expected_balance_cents Int?
+  difference_cents      Int?
+  status                String    @default("open") // open | closed
+  opened_at             DateTime  @default(now())
+  closed_at             DateTime?
+
+  operator     User          @relation(fields: [operator_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  transactions Transaction[]
+
+  @@index([terminal_id])
+  @@index([operator_id])
+  @@index([status])
+  @@map("cash_register")
+}
+
+// ------------------------------------------
+// Transaction — Movimentações financeiras
+// ------------------------------------------
+model Transaction {
+  id               String   @id @default(uuid())
+  type             String   // sale | refund | cancellation | cash_in | cash_out | fiado_payment
+  amount_cents     Int
+  sale_id          String?
+  cash_register_id String
+  operator_id      String
+  description      String?
+  created_at       DateTime @default(now())
+
+  sale          Sale?        @relation(fields: [sale_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  cash_register CashRegister @relation(fields: [cash_register_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([type])
+  @@index([sale_id])
+  @@index([cash_register_id])
+  @@index([created_at])
+  @@map("transaction")
+}
+
+// ------------------------------------------
+// AuditLog — Registro de auditoria (append-only)
+// Sem updated_at nem deleted_at.
+// ------------------------------------------
+model AuditLog {
+  id          String   @id @default(uuid())
+  action      String
+  actor_id    String
+  entity_type String
+  entity_id   String
+  details     String?  // JSON serializado
+  ip_address  String?
+  terminal_id String?
+  created_at  DateTime @default(now())
+
+  actor User @relation("AuditActor", fields: [actor_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([actor_id])
+  @@index([action])
+  @@index([entity_type, entity_id])
+  @@index([created_at])
+  @@map("audit_log")
+}

@@ -1,0 +1,34 @@
+{
+  "name": "pdv-fiado-digital",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sistema PDV híbrido local para pequenos comércios",
+  "scripts": {
+    "dev": "pnpm --parallel -r run dev",
+    "dev:api": "pnpm --filter @pdv/api run dev",
+    "dev:web": "pnpm --filter @pdv/web run dev",
+    "build": "pnpm -r run build",
+    "build:api": "pnpm --filter @pdv/api run build",
+    "build:web": "pnpm --filter @pdv/web run build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "test:unit": "pnpm -r run test:unit",
+    "test:e2e": "pnpm -r run test:e2e",
+    "db:migrate": "pnpm --filter @pdv/api run db:migrate",
+    "db:seed": "pnpm --filter @pdv/api run db:seed",
+    "db:studio": "pnpm --filter @pdv/api run db:studio",
+    "clean": "pnpm -r run clean && rimraf node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

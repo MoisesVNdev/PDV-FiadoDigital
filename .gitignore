@@ -1,1 +1,55 @@
+# Dependências
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+*.tsbuildinfo
+
+# Banco de Dados
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Variáveis de ambiente
+.env
+.env.local
+.env.*.local
+
+# Backups locais
+backups/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# IDE
 .history/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tauri
+src-tauri/target/
+
+# Docker
+docker/data/
+
+# Temporários
+tmp/
+temp/
+.cache/
+
+# Projeto — arquivos ignorados
+docs/info-projeto/*
+.github/*
