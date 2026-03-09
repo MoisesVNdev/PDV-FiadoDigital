@@ -10,7 +10,7 @@ cashRegisterRouter.use(authenticate);
 
 cashRegisterRouter.get(
   "/",
-  authorize("admin", "manager"),
+  authorize("admin", "manager", "operator"),
   controller.list,
 );
 cashRegisterRouter.get(
@@ -24,12 +24,27 @@ cashRegisterRouter.post(
   controller.open,
 );
 cashRegisterRouter.post(
+  "/",
+  authorize("admin", "manager", "operator"),
+  controller.open,
+);
+cashRegisterRouter.post(
   "/close",
   authorize("admin", "manager", "operator"),
   controller.close,
 );
 cashRegisterRouter.post(
   "/cash-out",
-  authorize("admin", "manager"),
+  authorize("admin", "manager", "operator"),
   controller.cashOut,
+);
+cashRegisterRouter.post(
+  "/:id/cash-out",
+  authorize("admin", "manager", "operator"),
+  controller.cashOutById,
+);
+cashRegisterRouter.post(
+  "/:id/cash-in",
+  authorize("admin", "manager", "operator"),
+  controller.cashInById,
 );

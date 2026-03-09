@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import { config } from "../config/index.js";
 import { UserRepository } from "../repositories/user.repository.js";
+import { ROLES } from "@pdv/shared";
 
 const userRepository = new UserRepository();
 
@@ -88,6 +89,31 @@ export class AuthService {
         can_view_cost_price: user.can_view_cost_price,
       },
     };
+  }
+
+  async validateManagerPin(pin: string): Promise<boolean> {
+    const managers = await userRepository.findActiveByRoles([
+      ROLES.ADMIN,
+      ROLES.MANAGER,
+    ]);
+
+    if (managers.length === 0) {
+      return false;
+    }
+
+    for (const manager of managers) {
+      if (!manager.pin_hash) {
+        continue;
+      }
+
+      const isMatch = await bcrypt.compare(pin, manager.pin_hash);
+
+      if (isMatch) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private generateAccessToken(userId: string, role: string): string {

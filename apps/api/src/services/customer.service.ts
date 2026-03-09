@@ -4,8 +4,8 @@ import type { CreateCustomerPayload } from "@pdv/shared";
 const customerRepository = new CustomerRepository();
 
 export class CustomerService {
-  async list() {
-    return customerRepository.findAll();
+  async list(search?: string) {
+    return customerRepository.findAll(search);
   }
 
   async getById(id: string) {

@@ -5,6 +5,8 @@ import type { CreateSalePayload } from "@pdv/shared";
 type CartItem = {
   product_id: string;
   product_name: string;
+  product_barcode?: string | null;
+  product_description?: string | null;
   quantity: number;
   unit_price_cents: number;
   discount_cents: number;
@@ -27,7 +29,10 @@ export const useSaleStore = defineStore("sale", () => {
 
   function addItem(item: CartItem): void {
     const existing = items.value.find(
-      (i) => i.product_id === item.product_id,
+      (i) =>
+        i.product_id === item.product_id &&
+        i.unit_price_cents === item.unit_price_cents &&
+        i.discount_cents === item.discount_cents,
     );
 
     if (existing) {
@@ -40,6 +45,21 @@ export const useSaleStore = defineStore("sale", () => {
 
   function removeItem(productId: string): void {
     items.value = items.value.filter((i) => i.product_id !== productId);
+  }
+
+  function updateItemQuantity(productId: string, newQuantity: number): void {
+    const item = items.value.find((i) => i.product_id === productId);
+    
+    if (!item) {
+      return;
+    }
+
+    if (newQuantity <= 0) {
+      removeItem(productId);
+      return;
+    }
+
+    item.quantity = newQuantity;
   }
 
   function clearCart(): void {
@@ -78,6 +98,7 @@ export const useSaleStore = defineStore("sale", () => {
     totalCents,
     addItem,
     removeItem,
+    updateItemQuantity,
     clearCart,
     buildPayload,
   };

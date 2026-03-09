@@ -4,9 +4,10 @@ import { CustomerService } from "../services/customer.service.js";
 const customerService = new CustomerService();
 
 export class CustomerController {
-  async list(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const customers = await customerService.list();
+      const search = typeof req.query.search === "string" ? req.query.search : undefined;
+      const customers = await customerService.list(search);
       res.json({ success: true, data: customers });
     } catch (error) {
       next(error);

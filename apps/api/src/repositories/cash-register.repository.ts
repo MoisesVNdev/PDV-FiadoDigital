@@ -22,6 +22,7 @@ export class CashRegisterRepository {
       data: {
         ...data,
         status: "open",
+        expected_balance_cents: data.opening_balance_cents,
       },
     });
   }
@@ -43,14 +44,67 @@ export class CashRegisterRepository {
     });
   }
 
-  async cashOut(id: string, _amountCents: number, _description: string) {
-    // TODO: Implementar registro de sangria como Transaction
+  async cashOut(
+    id: string,
+    amountCents: number,
+    description: string,
+    operatorId: string,
+  ) {
     const register = await prisma.cashRegister.findUnique({ where: { id } });
 
     if (!register || register.status !== "open") {
       throw new Error("Caixa não está aberto");
     }
 
-    return register;
+    return prisma.$transaction(async (tx) => {
+      await tx.transaction.create({
+        data: {
+          type: "cash_out",
+          amount_cents: amountCents,
+          cash_register_id: id,
+          operator_id: operatorId,
+          description,
+        },
+      });
+
+      return tx.cashRegister.update({
+        where: { id },
+        data: {
+          expected_balance_cents: (register.expected_balance_cents ?? register.opening_balance_cents) - amountCents,
+        },
+      });
+    });
+  }
+
+  async cashIn(
+    id: string,
+    amountCents: number,
+    description: string,
+    operatorId: string,
+  ) {
+    const register = await prisma.cashRegister.findUnique({ where: { id } });
+
+    if (!register || register.status !== "open") {
+      throw new Error("Caixa não está aberto");
+    }
+
+    return prisma.$transaction(async (tx) => {
+      await tx.transaction.create({
+        data: {
+          type: "cash_in",
+          amount_cents: amountCents,
+          cash_register_id: id,
+          operator_id: operatorId,
+          description,
+        },
+      });
+
+      return tx.cashRegister.update({
+        where: { id },
+        data: {
+          expected_balance_cents: (register.expected_balance_cents ?? register.opening_balance_cents) + amountCents,
+        },
+      });
+    });
   }
 }

@@ -13,8 +13,8 @@ const controller = new ProductController();
 
 productRouter.use(authenticate);
 
-productRouter.get("/", authorize("admin", "manager", "stockist"), controller.list);
-productRouter.get("/:id", authorize("admin", "manager", "stockist"), controller.getById);
+productRouter.get("/", authorize("admin", "manager", "stockist", "operator"), controller.list);
+productRouter.get("/:id", authorize("admin", "manager", "stockist", "operator"), controller.getById);
 productRouter.post(
   "/",
   authorize("admin", "manager", "stockist"),

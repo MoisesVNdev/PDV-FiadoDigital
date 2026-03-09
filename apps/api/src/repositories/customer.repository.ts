@@ -1,9 +1,22 @@
 import { prisma } from "../config/database.js";
 
 export class CustomerRepository {
-  async findAll() {
+  async findAll(search?: string) {
+    const normalizedSearch = search?.trim();
+
     return prisma.customer.findMany({
-      where: { deleted_at: null },
+      where: {
+        deleted_at: null,
+        ...(normalizedSearch
+          ? {
+              OR: [
+                { name: { contains: normalizedSearch } },
+                { phone: { contains: normalizedSearch } },
+                { email: { contains: normalizedSearch } },
+              ],
+            }
+          : {}),
+      },
     });
   }
 

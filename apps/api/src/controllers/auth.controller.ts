@@ -71,4 +71,24 @@ export class AuthController {
 
     res.json({ success: true, message: "Logout realizado" });
   }
+
+  async validatePin(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const { pin } = req.body as { pin: string };
+      const isValid = await authService.validateManagerPin(pin);
+
+      if (!isValid) {
+        res.status(403).json({ success: false, message: "PIN inválido" });
+        return;
+      }
+
+      res.json({ success: true, data: { valid: true } });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
