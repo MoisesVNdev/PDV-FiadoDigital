@@ -10,8 +10,9 @@ export const config = {
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
   },
   pix: {
-    key: process.env.PIX_KEY || "",
-    merchantName: process.env.PIX_MERCHANT_NAME || "",
-    merchantCity: process.env.PIX_MERCHANT_CITY || "",
+    keyType: (process.env.PIX_KEY_TYPE || "") as string,
+    key: (process.env.PIX_KEY || "") as string,
+    merchantName: (process.env.PIX_MERCHANT_NAME || "") as string,
+    merchantCity: (process.env.PIX_MERCHANT_CITY || "") as string,
   },
 } as const;

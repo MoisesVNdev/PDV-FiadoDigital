@@ -7,7 +7,8 @@ export class CustomerController {
   async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const search = typeof req.query.search === "string" ? req.query.search : undefined;
-      const customers = await customerService.list(search);
+      const onlyActive = req.query.only_active === "true";
+      const customers = await customerService.list(search, onlyActive);
       res.json({ success: true, data: customers });
     } catch (error) {
       next(error);

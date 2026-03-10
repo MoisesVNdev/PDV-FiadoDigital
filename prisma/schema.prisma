@@ -241,3 +241,15 @@ model AuditLog {
   @@index([created_at])
   @@map("audit_log")
 }
+
+// ------------------------------------------
+// Settings — Configurações do sistema
+// ------------------------------------------
+model Settings {
+  id         String   @id @default(uuid())
+  key        String   @unique
+  value      String
+  updated_at DateTime @updatedAt
+
+  @@map("settings")
+}

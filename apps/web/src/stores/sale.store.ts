@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { CreateSalePayload } from "@pdv/shared";
+import type { CreateSalePayload, SalePayment } from "@pdv/shared";
 
 type CartItem = {
   product_id: string;
@@ -10,6 +10,7 @@ type CartItem = {
   quantity: number;
   unit_price_cents: number;
   discount_cents: number;
+  stock_quantity: number;
 };
 
 export const useSaleStore = defineStore("sale", () => {
@@ -72,6 +73,7 @@ export const useSaleStore = defineStore("sale", () => {
     terminalId: string,
     paymentMethod: string,
     operatorId: string,
+    payments: SalePayment[],
     customerId?: string,
   ): CreateSalePayload {
     return {
@@ -80,6 +82,7 @@ export const useSaleStore = defineStore("sale", () => {
       operator_id: operatorId,
       payment_method: paymentMethod as CreateSalePayload["payment_method"],
       discount_cents: discountCents.value,
+      payments,
       customer_id: customerId,
       items: items.value.map((item) => ({
         product_id: item.product_id,

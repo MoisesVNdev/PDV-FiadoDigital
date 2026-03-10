@@ -9,6 +9,17 @@ const saleItemSchema = z.object({
   discount_cents: z.number().int().nonnegative(),
 });
 
+const salePaymentSchema = z.object({
+  method: z.enum([
+    PAYMENT_METHODS.CASH,
+    PAYMENT_METHODS.PIX,
+    PAYMENT_METHODS.CREDIT_CARD,
+    PAYMENT_METHODS.DEBIT_CARD,
+    PAYMENT_METHODS.FIADO,
+  ]),
+  amount_cents: z.number().int().positive(),
+});
+
 const createSaleSchema = z.object({
   uuid: z.string().uuid(),
   customer_id: z.string().uuid().optional(),
@@ -22,6 +33,7 @@ const createSaleSchema = z.object({
     PAYMENT_METHODS.MIXED,
   ]),
   discount_cents: z.number().int().nonnegative(),
+  payments: z.array(salePaymentSchema).min(1),
   items: z.array(saleItemSchema).min(1),
 });
 

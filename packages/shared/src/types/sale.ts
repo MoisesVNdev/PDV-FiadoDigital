@@ -29,6 +29,11 @@ export type Sale = {
 
 export type SaleStatus = "pending" | "completed" | "cancelled" | "refunded";
 
+export type SalePayment = {
+  method: PaymentMethod;
+  amount_cents: number;
+};
+
 export type CreateSalePayload = {
   uuid: string;
   operator_id: string;
@@ -36,6 +41,7 @@ export type CreateSalePayload = {
   terminal_id: string;
   payment_method: PaymentMethod;
   discount_cents: number;
+  payments: SalePayment[];
   items: {
     product_id: string;
     quantity: number;

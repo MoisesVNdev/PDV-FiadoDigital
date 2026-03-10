@@ -1,12 +1,13 @@
 import { prisma } from "../config/database.js";
 
 export class CustomerRepository {
-  async findAll(search?: string) {
+  async findAll(search?: string, onlyActive = false) {
     const normalizedSearch = search?.trim();
 
     return prisma.customer.findMany({
       where: {
         deleted_at: null,
+        ...(onlyActive ? { is_active: true } : {}),
         ...(normalizedSearch
           ? {
               OR: [

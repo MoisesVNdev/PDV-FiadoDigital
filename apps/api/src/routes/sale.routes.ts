@@ -2,6 +2,7 @@ import { Router } from "express";
 import { SaleController } from "../controllers/sale.controller.js";
 import { authenticate } from "../middlewares/auth.middleware.js";
 import { authorize } from "../middlewares/role.middleware.js";
+import { validateCreateSale } from "../validators/sale.validator.js";
 
 export const saleRouter = Router();
 const controller = new SaleController();
@@ -17,6 +18,7 @@ saleRouter.get(
 saleRouter.post(
   "/",
   authorize("admin", "manager", "operator"),
+  validateCreateSale,
   controller.create,
 );
 saleRouter.post(

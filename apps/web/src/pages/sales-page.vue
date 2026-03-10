@@ -8,7 +8,8 @@ import {
   type PaymentMethod,
   type Product,
 } from "@pdv/shared";
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import QRCode from "qrcode";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
 import { useApi } from "@/composables/use-api.js";
@@ -98,6 +99,20 @@ const paymentSuccess = ref(false);
 const finalizedChangeCents = ref(0);
 const finalizedReceivedCents = ref(0);
 
+// Estados para fluxo do Pix QR Code
+const showPixQRCodeModal = ref(false);
+const pixQRCodePayload = ref<string>("");
+const pixQRCodeCents = ref<number>(0);
+const pixQRCodeTxId = ref<string>("");
+const pixQRCodeMerchantName = ref<string>("");
+const pixQRCodeTimeoutSeconds = ref<number>(300); // 5 minutos
+const pixQRCodeLoading = ref(false);
+const pixQRCodeError = ref<string | null>(null);
+const pixQRCodeExpired = ref(false);
+const pixQRCodeCanvasRef = ref<HTMLCanvasElement | null>(null);
+
+let pixQRCodeCountdownInterval: ReturnType<typeof setInterval> | null = null;
+
 const showCashOutModal = ref(false);
 const showCashInModal = ref(false);
 const movementAmountInput = ref("");
@@ -106,6 +121,11 @@ const movementLoading = ref(false);
 const movementError = ref<string | null>(null);
 
 const stockAlertToasts = ref<Array<{ id: string; message: string; productId: string }>>([]);
+
+const INACTIVE_CUSTOMER_SEARCH_MESSAGE =
+  "Cliente inativo. Não é possível vinculá-lo a uma venda.";
+const INACTIVE_FIADO_MODAL_MESSAGE =
+  "Este cliente está inativo e não pode realizar compras a prazo.";
 
 let clockInterval: ReturnType<typeof setInterval> | null = null;
 let scannerBuffer = "";
@@ -151,6 +171,10 @@ const cashAmountRequiredCents = computed(() => {
 const cashReceivedCents = computed(() => parseCurrencyInputToCents(cashReceivedInput.value));
 
 const cashChangeCents = computed(() => {
+  if (!cashReceivedInput.value.trim()) {
+    return 0;
+  }
+
   const change = cashReceivedCents.value - cashAmountRequiredCents.value;
 
   if (change < 0) {
@@ -174,11 +198,15 @@ const customerCanUseFiado = computed(() => {
     return false;
   }
 
+  if (!selectedCustomer.value.is_active) {
+    return false;
+  }
+
   if (selectedCustomer.value.credit_blocked) {
     return false;
   }
 
-  return selectedCustomer.value.current_debt_cents + totalCents.value <= selectedCustomer.value.credit_limit_cents;
+  return selectedCustomer.value.current_debt_cents < selectedCustomer.value.credit_limit_cents;
 });
 
 const productSearchResults = computed(() => {
@@ -200,12 +228,13 @@ const productSearchResults = computed(() => {
 
 const customerListResults = computed(() => {
   const term = customerListFilterInput.value.trim().toLowerCase();
+  const activeCustomers = allCustomers.value.filter((customer) => customer.is_active);
 
   if (!term) {
-    return allCustomers.value.slice(0, 50);
+    return activeCustomers.slice(0, 50);
   }
 
-  return allCustomers.value
+  return activeCustomers
     .filter((customer) => {
       return (
         customer.name.toLowerCase().includes(term) ||
@@ -213,6 +242,82 @@ const customerListResults = computed(() => {
       );
     })
     .slice(0, 50);
+});
+
+const hasInactiveSelectedCustomer = computed(() => {
+  if (!selectedCustomer.value) {
+    return false;
+  }
+
+  return !selectedCustomer.value.is_active;
+});
+
+const hasFiadoSelectedInPayment = computed(() => {
+  return paymentRows.value.some((row) => row.method === PAYMENT_METHODS.FIADO);
+});
+
+const fiadoInactiveCustomerError = computed(() => {
+  if (!hasFiadoSelectedInPayment.value) {
+    return null;
+  }
+
+  if (!hasInactiveSelectedCustomer.value) {
+    return null;
+  }
+
+  return INACTIVE_FIADO_MODAL_MESSAGE;
+});
+
+const availableCreditCents = computed(() => {
+  if (!selectedCustomer.value) {
+    return 0;
+  }
+
+  return selectedCustomer.value.credit_limit_cents - selectedCustomer.value.current_debt_cents;
+});
+
+const fiadoAllocationCents = computed(() => {
+  const fiadoRow = paymentRows.value.find((row) => row.method === PAYMENT_METHODS.FIADO);
+  return fiadoRow ? parseCurrencyInputToCents(fiadoRow.amountInput) : 0;
+});
+
+const hasFiadoInsufficientCredit = computed(() => {
+  if (!hasFiadoSelectedInPayment.value) {
+    return false;
+  }
+
+  if (!selectedCustomer.value) {
+    return false;
+  }
+
+  return fiadoAllocationCents.value > availableCreditCents.value;
+});
+
+const usedPaymentMethods = computed(() => {
+  return paymentRows.value.map((row) => row.method);
+});
+
+const availablePaymentMethods = computed(() => {
+  return paymentMethods.filter((method) => !usedPaymentMethods.value.includes(method.value));
+});
+
+const canAddMorePaymentRows = computed(() => {
+  return paymentRows.value.length < 2 && availablePaymentMethods.value.length > 0;
+});
+
+const hasPixPayment = computed(() => {
+  return paymentRows.value.some((row) => row.method === PAYMENT_METHODS.PIX);
+});
+
+const pixPaymentCents = computed(() => {
+  const pixRow = paymentRows.value.find((row) => row.method === PAYMENT_METHODS.PIX);
+  return pixRow ? parseCurrencyInputToCents(pixRow.amountInput) : 0;
+});
+
+const pixQRCodeTimeoutFormatted = computed(() => {
+  const minutes = Math.floor(pixQRCodeTimeoutSeconds.value / 60);
+  const seconds = pixQRCodeTimeoutSeconds.value % 60;
+  return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 });
 
 onMounted(async () => {
@@ -493,7 +598,9 @@ async function searchCustomer(): Promise<void> {
   try {
     const digitsOnly = normalizePhoneDigits(value);
     const searchValue = digitsOnly || value;
-    const response = await authenticatedFetch(`/api/customers?search=${encodeURIComponent(searchValue)}`);
+    const response = await authenticatedFetch(
+      `/api/customers?search=${encodeURIComponent(searchValue)}&only_active=true`,
+    );
     const data = await response.json();
 
     if (!response.ok) {
@@ -501,10 +608,23 @@ async function searchCustomer(): Promise<void> {
       return;
     }
 
-    const customers = (data.data || []) as Customer[];
+    const customers = ((data.data || []) as Customer[]).filter((customer) => customer.is_active);
     selectedCustomer.value = customers[0] || null;
 
     if (!selectedCustomer.value) {
+      const inactiveLookupResponse = await authenticatedFetch(
+        `/api/customers?search=${encodeURIComponent(searchValue)}`,
+      );
+      const inactiveLookupData = await inactiveLookupResponse.json();
+      const hasInactiveMatch = ((inactiveLookupData.data || []) as Customer[]).some(
+        (customer) => !customer.is_active,
+      );
+
+      if (hasInactiveMatch) {
+        customerSearchMessage.value = INACTIVE_CUSTOMER_SEARCH_MESSAGE;
+        return;
+      }
+
       customerSearchMessage.value = "Cliente não cadastrado";
       return;
     }
@@ -538,7 +658,7 @@ async function loadCustomersForList(): Promise<void> {
   customerListError.value = null;
 
   try {
-    const response = await authenticatedFetch("/api/customers");
+    const response = await authenticatedFetch("/api/customers?only_active=true");
     const data = await response.json();
 
     if (!response.ok) {
@@ -546,7 +666,7 @@ async function loadCustomersForList(): Promise<void> {
       return;
     }
 
-    allCustomers.value = data.data as Customer[];
+    allCustomers.value = (data.data as Customer[]).filter((customer) => customer.is_active);
   } catch {
     customerListError.value = "Erro de conexão ao carregar clientes.";
   } finally {
@@ -555,8 +675,14 @@ async function loadCustomersForList(): Promise<void> {
 }
 
 function selectCustomerFromList(customer: Customer): void {
+  if (!customer.is_active) {
+    customerSearchMessage.value = INACTIVE_CUSTOMER_SEARCH_MESSAGE;
+    return;
+  }
+
   selectedCustomer.value = customer;
   customerSearchInput.value = formatPhoneForInput(customer.phone || "");
+  customerSearchMessage.value = null;
   showCustomerListModal.value = false;
 }
 
@@ -637,6 +763,16 @@ async function findProduct(code: string): Promise<Product | null> {
 }
 
 function addProductToCart(product: Product, quantity: number): void {
+  // Verificar estoque disponível
+  const existingItem = saleStore.items.find((i) => i.product_id === product.id);
+  const currentQuantityInCart = existingItem ? existingItem.quantity : 0;
+  const requestedTotal = currentQuantityInCart + quantity;
+
+  if (requestedTotal > product.stock_quantity) {
+    productMessage.value = `Estoque insuficiente. Disponível: ${product.stock_quantity} unidades.`;
+    return;
+  }
+
   saleStore.addItem({
     product_id: product.id,
     product_name: product.name,
@@ -645,6 +781,7 @@ function addProductToCart(product: Product, quantity: number): void {
     quantity,
     unit_price_cents: product.price_cents,
     discount_cents: 0,
+    stock_quantity: product.stock_quantity,
   });
 }
 
@@ -715,6 +852,12 @@ function incrementItemQuantity(productId: string): void {
   const item = saleStore.items.find((i) => i.product_id === productId);
   
   if (!item) {
+    return;
+  }
+
+  // Validar estoque disponível
+  if (item.quantity + 1 > item.stock_quantity) {
+    productMessage.value = `Estoque insuficiente. Disponível: ${item.stock_quantity} unidades.`;
     return;
   }
 
@@ -881,6 +1024,7 @@ function confirmWeightedItem(): void {
     quantity: 1,
     unit_price_cents: weightedTotal,
     discount_cents: 0,
+    stock_quantity: weightedProduct.value.stock_quantity,
   });
 
   showWeightModal.value = false;
@@ -896,12 +1040,23 @@ function openPaymentModal(): void {
   paymentRows.value = [{ method: PAYMENT_METHODS.CASH, amountInput: formatCents(totalCents.value) }];
   cashReceivedInput.value = "";
   paymentError.value = null;
+  pixQRCodeError.value = null;
   paymentSuccess.value = false;
   showPaymentModal.value = true;
 }
 
 function addPaymentRow(): void {
-  paymentRows.value.push({ method: PAYMENT_METHODS.PIX, amountInput: "" });
+  if (!canAddMorePaymentRows.value) {
+    return;
+  }
+
+  const firstAvailable = availablePaymentMethods.value[0];
+
+  if (!firstAvailable) {
+    return;
+  }
+
+  paymentRows.value.push({ method: firstAvailable.value, amountInput: "" });
 }
 
 function removePaymentRow(index: number): void {
@@ -932,19 +1087,26 @@ async function confirmPayment(): Promise<void> {
 
     const informedTotal = paymentRowsTotalCents.value;
 
-    if (informedTotal !== totalCents.value) {
-      paymentError.value = "A soma dos pagamentos deve ser igual ao total da venda.";
+    if (informedTotal < totalCents.value) {
+      paymentError.value = "A soma dos pagamentos é insuficiente para o total da venda.";
       return;
     }
 
     const hasFiado = paymentRows.value.some((row) => row.method === PAYMENT_METHODS.FIADO);
+
+    if (hasFiado && hasInactiveSelectedCustomer.value) {
+      paymentError.value = INACTIVE_FIADO_MODAL_MESSAGE;
+      return;
+    }
 
     if (hasFiado && !customerCanUseFiado.value) {
       paymentError.value = "Cliente não elegível para fiado.";
       return;
     }
 
-    if (cashAmountRequiredCents.value > 0 && cashReceivedCents.value < cashAmountRequiredCents.value) {
+    const hasCashReceivedEntry = cashReceivedInput.value.trim().length > 0;
+
+    if (cashAmountRequiredCents.value > 0 && hasCashReceivedEntry && cashReceivedCents.value < cashAmountRequiredCents.value) {
       paymentError.value = "Valor recebido em dinheiro é insuficiente.";
       return;
     }
@@ -959,10 +1121,34 @@ async function confirmPayment(): Promise<void> {
       return;
     }
 
+    // Se há Pix, gerar QR Code e aguardar confirmação do operador
+    if (hasPixPayment.value) {
+      await generatePixQRCode();
+      return;
+    }
+
+    const payments = paymentRows.value.map((row) => ({
+      method: row.method,
+      amount_cents: parseCurrencyInputToCents(row.amountInput),
+    }));
+
+    // Normalizar: se a soma excede o total (troco em dinheiro), ajustar o valor do cash
+    const paymentSum = payments.reduce((s, p) => s + p.amount_cents, 0);
+    const excess = paymentSum - totalCents.value;
+
+    if (excess > 0) {
+      const cashPayment = payments.find((p) => p.method === PAYMENT_METHODS.CASH);
+
+      if (cashPayment && cashPayment.amount_cents >= excess) {
+        cashPayment.amount_cents -= excess;
+      }
+    }
+
     const payload = saleStore.buildPayload(
       terminalId.value,
       paymentMethod,
       operatorId,
+      payments,
       selectedCustomer.value?.id,
     );
 
@@ -978,7 +1164,9 @@ async function confirmPayment(): Promise<void> {
       return;
     }
 
-    finalizedReceivedCents.value = cashReceivedCents.value;
+    finalizedReceivedCents.value = cashReceivedInput.value.trim()
+      ? cashReceivedCents.value
+      : cashAmountRequiredCents.value;
     finalizedChangeCents.value = cashChangeCents.value;
     paymentSuccess.value = true;
 
@@ -999,6 +1187,195 @@ function closePaymentModalAfterSuccess(): void {
   showPaymentModal.value = false;
   paymentSuccess.value = false;
   paymentError.value = null;
+}
+
+async function generatePixQRCode(): Promise<void> {
+  pixQRCodeError.value = null;
+  paymentError.value = null;
+  pixQRCodeLoading.value = true;
+
+  try {
+    if (!hasPixPayment.value) {
+      pixQRCodeError.value = "Pix não selecionado como meio de pagamento.";
+      return;
+    }
+
+    const txId = saleStore.saleUuid || crypto.randomUUID();
+    saleStore.saleUuid = txId;
+    const pixCents = pixPaymentCents.value;
+
+    if (pixCents <= 0) {
+      pixQRCodeError.value = "Valor do Pix não foi especificado.";
+      return;
+    }
+
+    pixQRCodeTxId.value = txId;
+    pixQRCodeCents.value = pixCents;
+
+    const response = await authenticatedFetch("/api/pix/qrcode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tx_id: txId,
+        amount_cents: pixCents,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const message = data.message || "Falha ao gerar QR Code Pix.";
+      pixQRCodeError.value = message;
+      paymentError.value = message;
+      return;
+    }
+
+    pixQRCodePayload.value = data.data?.qr_code_payload || "";
+    pixQRCodeMerchantName.value = data.data?.merchant_name || "";
+
+    if (!pixQRCodePayload.value.trim()) {
+      const message = "Falha ao gerar QR Code Pix. Tente novamente.";
+      pixQRCodeError.value = message;
+      paymentError.value = message;
+      return;
+    }
+
+    pixQRCodeTimeoutSeconds.value = 300; // 5 minutos
+    pixQRCodeExpired.value = false;
+    showPixQRCodeModal.value = true;
+
+    await nextTick();
+
+    if (pixQRCodeCanvasRef.value) {
+      await QRCode.toCanvas(pixQRCodeCanvasRef.value, pixQRCodePayload.value, {
+        width: 220,
+        margin: 1,
+      });
+    }
+
+    // Iniciar contagem regressiva
+    startPixQRCodeCountdown();
+  } catch {
+    const message = "Erro de conexão ao gerar QR Code Pix.";
+    pixQRCodeError.value = message;
+    paymentError.value = message;
+  } finally {
+    pixQRCodeLoading.value = false;
+  }
+}
+
+function startPixQRCodeCountdown(): void {
+  if (pixQRCodeCountdownInterval) {
+    clearInterval(pixQRCodeCountdownInterval);
+  }
+
+  pixQRCodeCountdownInterval = setInterval(() => {
+    pixQRCodeTimeoutSeconds.value -= 1;
+
+    if (pixQRCodeTimeoutSeconds.value <= 0) {
+      pixQRCodeExpired.value = true;
+      clearInterval(pixQRCodeCountdownInterval!);
+      pixQRCodeCountdownInterval = null;
+    }
+  }, 1000);
+}
+
+function stopPixQRCodeCountdown(): void {
+  if (pixQRCodeCountdownInterval) {
+    clearInterval(pixQRCodeCountdownInterval);
+    pixQRCodeCountdownInterval = null;
+  }
+}
+
+function copyPixCodigo(): void {
+  if (!pixQRCodePayload.value) {
+    return;
+  }
+
+  navigator.clipboard.writeText(pixQRCodePayload.value);
+  // Toast de confirmação podem ser adicionados aqui se necessário
+}
+
+async function confirmPixReceived(): Promise<void> {
+  paymentLoading.value = true;
+
+  try {
+    // Agora finalizar a venda normalmente
+    const uniqueMethods = Array.from(new Set(paymentRows.value.map((row) => row.method)));
+    const paymentMethod = (uniqueMethods.length > 1 ? PAYMENT_METHODS.MIXED : uniqueMethods[0]) as string;
+
+    const operatorId = authStore.user?.id;
+
+    if (!operatorId) {
+      paymentError.value = "Operador não identificado.";
+      return;
+    }
+
+    const payments = paymentRows.value.map((row) => ({
+      method: row.method,
+      amount_cents: parseCurrencyInputToCents(row.amountInput),
+    }));
+
+    // Normalizar: se a soma excede o total (troco em dinheiro), ajustar o valor do cash
+    const paymentSum = payments.reduce((s, p) => s + p.amount_cents, 0);
+    const excess = paymentSum - totalCents.value;
+
+    if (excess > 0) {
+      const cashPayment = payments.find((p) => p.method === PAYMENT_METHODS.CASH);
+
+      if (cashPayment && cashPayment.amount_cents >= excess) {
+        cashPayment.amount_cents -= excess;
+      }
+    }
+
+    const payload = saleStore.buildPayload(
+      terminalId.value,
+      paymentMethod,
+      operatorId,
+      payments,
+      selectedCustomer.value?.id,
+    );
+
+    const response = await authenticatedFetch("/api/sales", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      paymentError.value = data.message || "Falha ao finalizar venda com Pix.";
+      return;
+    }
+
+    finalizedReceivedCents.value = cashReceivedInput.value.trim()
+      ? cashReceivedCents.value
+      : cashAmountRequiredCents.value;
+    finalizedChangeCents.value = cashChangeCents.value;
+    paymentSuccess.value = true;
+
+    await requestReceiptPrint({
+      sale_id: data.data?.id,
+      terminal_id: terminalId.value,
+    });
+
+    stopPixQRCodeCountdown();
+    showPixQRCodeModal.value = false;
+    resetSaleState();
+  } catch {
+    paymentError.value = "Erro de conexão ao finalizar venda com Pix.";
+  } finally {
+    paymentLoading.value = false;
+  }
+}
+
+function closePixQRCodeModal(): void {
+  showPixQRCodeModal.value = false;
+  stopPixQRCodeCountdown();
+  pixQRCodePayload.value = "";
+  pixQRCodeError.value = null;
+  pixQRCodeExpired.value = false;
 }
 
 async function requestReceiptPrint(payload: Record<string, unknown>): Promise<void> {
@@ -1745,7 +2122,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                   v-for="method in paymentMethods"
                   :key="method.value"
                   :value="method.value"
-                  :disabled="isFiadoOptionDisabled(method.value)"
+                  :disabled="isFiadoOptionDisabled(method.value) || (usedPaymentMethods.includes(method.value) && row.method !== method.value)"
                 >
                   {{ method.label }}
                 </option>
@@ -1771,10 +2148,11 @@ function captureScannerInput(event: KeyboardEvent): boolean {
 
             <button
               type="button"
-              class="h-10 rounded-md border border-blue-300 px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+              class="h-10 rounded-md border border-blue-300 px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="!canAddMorePaymentRows"
               @click="addPaymentRow"
             >
-              Adicionar meio de pagamento
+              {{ canAddMorePaymentRows ? "Adicionar meio de pagamento" : "Máximo de 2 meios de pagamento atingido." }}
             </button>
           </div>
 
@@ -1792,6 +2170,18 @@ function captureScannerInput(event: KeyboardEvent): boolean {
             <p class="mt-2 text-sm text-slate-700">Troco: <strong>{{ formatCents(cashChangeCents) }}</strong></p>
           </div>
 
+          <div v-if="hasFiadoSelectedInPayment && selectedCustomer" class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-3">
+            <p class="text-sm text-blue-700">
+              Crédito disponível:
+              <strong :class="hasFiadoInsufficientCredit ? 'text-red-700' : 'text-blue-900'">
+                {{ formatCents(availableCreditCents) }}
+              </strong>
+            </p>
+            <p v-if="hasFiadoInsufficientCredit" class="mt-1 text-xs text-red-700">
+              Valor alocado ao fiado supera o crédito disponível do cliente.
+            </p>
+          </div>
+
           <div class="mt-4 rounded-md border border-slate-200 p-3">
             <p class="text-sm text-slate-700">
               Saldo restante:
@@ -1805,6 +2195,10 @@ function captureScannerInput(event: KeyboardEvent): boolean {
             {{ paymentError }}
           </p>
 
+          <p v-if="fiadoInactiveCustomerError" role="alert" class="mt-2 text-sm text-amber-700">
+            {{ fiadoInactiveCustomerError }}
+          </p>
+
           <div class="mt-4 flex justify-end gap-2">
             <button
               type="button"
@@ -1816,13 +2210,104 @@ function captureScannerInput(event: KeyboardEvent): boolean {
             <button
               type="button"
               class="h-10 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
-              :disabled="paymentLoading"
+              :disabled="paymentLoading || !!fiadoInactiveCustomerError || hasFiadoInsufficientCredit"
               @click="confirmPayment"
             >
               {{ paymentLoading ? "Confirmando..." : "Confirmar" }}
             </button>
           </div>
         </template>
+      </div>
+    </div>
+
+    <div
+      v-if="showPixQRCodeModal"
+      class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
+      @click.self="!pixQRCodeLoading && !paymentLoading && closePixQRCodeModal()"
+    >
+      <div class="w-full max-w-sm rounded-xl bg-white p-5 shadow-lg">
+        <h2 class="text-lg font-bold text-slate-900">Confirmar Pagamento Pix</h2>
+
+        <div v-if="!pixQRCodeExpired" class="mt-4">
+          <div class="rounded-lg border border-blue-200 bg-blue-50 p-3">
+            <p class="text-sm text-blue-700">Valor a pagar</p>
+            <p class="text-2xl font-bold text-blue-900">{{ formatCents(pixQRCodeCents) }}</p>
+            <p class="mt-2 text-xs text-blue-600">Estabelecimento: {{ pixQRCodeMerchantName }}</p>
+          </div>
+
+          <div v-if="pixQRCodePayload" class="mt-4 space-y-3">
+            <div class="rounded-lg bg-slate-50 p-3">
+              <p class="mb-2 text-sm font-medium text-slate-700">Escaneie o QR Code</p>
+              <div class="flex justify-center">
+                <canvas ref="pixQRCodeCanvasRef" class="h-40 w-40 border border-slate-200"></canvas>
+              </div>
+            </div>
+
+            <div class="rounded-lg bg-slate-50 p-3">
+              <p class="mb-2 text-sm font-medium text-slate-700">Copia e Cola</p>
+              <div class="flex gap-2">
+                <input
+                  :value="pixQRCodePayload"
+                  type="text"
+                  readonly
+                  class="h-11 flex-1 rounded-md border border-slate-300 bg-white px-3 text-xs outline-none"
+                />
+                <button
+                  type="button"
+                  class="h-11 rounded-md bg-slate-200 px-3 text-slate-700 hover:bg-slate-300"
+                  @click="copyPixCodigo"
+                >
+                  Copiar
+                </button>
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p class="text-sm text-amber-800">
+                Validade: 
+                <strong>{{ pixQRCodeTimeoutFormatted }}</strong>
+              </p>
+            </div>
+          </div>
+
+          <p v-if="pixQRCodeError" role="alert" class="mt-3 text-sm text-red-700">
+            {{ pixQRCodeError }}
+          </p>
+
+          <div class="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              class="h-10 rounded-md border border-slate-300 px-4 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+              :disabled="pixQRCodeLoading || paymentLoading"
+              @click="closePixQRCodeModal"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              class="h-10 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
+              :disabled="pixQRCodeLoading || paymentLoading"
+              @click="confirmPixReceived"
+            >
+              {{ paymentLoading ? "Finalizando..." : "Pix Recebido" }}
+            </button>
+          </div>
+        </div>
+
+        <div v-else class="mt-4">
+          <div class="rounded-lg border border-red-200 bg-red-50 p-3">
+            <p class="text-sm text-red-700">QR Code expirado. Gere um novo para continuar.</p>
+          </div>
+          <div class="mt-4 flex justify-end">
+            <button
+              type="button"
+              class="h-10 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800"
+              @click="closePixQRCodeModal"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
