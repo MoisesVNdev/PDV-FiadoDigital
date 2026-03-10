@@ -5,6 +5,7 @@ import { authorize } from "../middlewares/role.middleware.js";
 import {
   validateCreateCustomer,
   validateUpdateCustomer,
+  validatePayDebt,
 } from "../validators/customer.validator.js";
 
 export const customerRouter = Router();
@@ -25,6 +26,12 @@ customerRouter.put(
   authorize("admin", "manager"),
   validateUpdateCustomer,
   controller.update,
+);
+customerRouter.post(
+  "/:id/pay-debt",
+  authorize("admin", "manager"),
+  validatePayDebt,
+  controller.payDebt,
 );
 customerRouter.delete(
   "/:id",

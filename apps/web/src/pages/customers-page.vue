@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatCents } from "@pdv/shared";
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
 import { useApi } from "@/composables/use-api.js";
@@ -32,16 +32,49 @@ interface FormErrors {
   submit?: string;
 }
 
+interface PaymentFormData {
+  amount_input: string;
+  pin: string;
+}
+
+interface PaymentFormErrors {
+  amount_cents?: string[];
+  pin?: string[];
+  submit?: string;
+}
+
+type SortBy = "name" | "credit_limit_cents" | "payment_due_day" | "current_debt_cents" | "is_active";
+type SortOrder = "asc" | "desc";
+
 const { authenticatedFetch } = useApi();
 
 const customers = ref<Customer[]>([]);
 const loadingList = ref(false);
 const listError = ref<string | null>(null);
+const currentPage = ref(1);
+const perPage = ref(10);
+const totalCustomers = ref(0);
+const totalPages = ref(0);
+
+const searchInput = ref("");
+const sortBy = ref<SortBy>("name");
+const sortOrder = ref<SortOrder>("asc");
+
+let searchTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 const showModal = ref(false);
 const isEditMode = ref(false);
 const editingId = ref<string | null>(null);
 const loadingSubmit = ref(false);
+
+const showPaymentModal = ref(false);
+const selectedPaymentCustomer = ref<Customer | null>(null);
+const paymentFormData = ref<PaymentFormData>({
+  amount_input: "",
+  pin: "",
+});
+const paymentFormErrors = ref<PaymentFormErrors>({});
+const paymentLoading = ref(false);
 
 const showToast = ref(false);
 const toastMessage = ref("");
@@ -58,6 +91,25 @@ const formData = ref<FormData>({
 
 const formErrors = ref<FormErrors>({});
 
+const totalPagesArray = computed(() => {
+  const pages = [];
+  const maxPagesToShow = 5;
+  const half = Math.floor(maxPagesToShow / 2);
+
+  let start = Math.max(1, currentPage.value - half);
+  let end = Math.min(totalPages.value, start + maxPagesToShow - 1);
+
+  if (end - start + 1 < maxPagesToShow) {
+    start = Math.max(1, end - maxPagesToShow + 1);
+  }
+
+  for (let i = start; i <= end; i++) {
+    pages.push(i);
+  }
+
+  return pages;
+});
+
 onMounted(async () => {
   await loadCustomers();
   window.addEventListener("keydown", handleEscapeKey);
@@ -65,6 +117,12 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleEscapeKey);
+  if (searchTimeoutId) clearTimeout(searchTimeoutId);
+});
+
+watch(() => searchInput.value, () => {
+  currentPage.value = 1;
+  debouncedSearch();
 });
 
 function handleEscapeKey(event: KeyboardEvent): void {
@@ -72,11 +130,14 @@ function handleEscapeKey(event: KeyboardEvent): void {
     return;
   }
 
-  if (!showModal.value) {
+  if (showModal.value) {
+    closeModal();
     return;
   }
 
-  closeModal();
+  if (showPaymentModal.value) {
+    closePaymentModal();
+  }
 }
 
 function normalizePhoneDigits(rawValue: string): string {
@@ -169,6 +230,24 @@ function handleCreditLimitInput(event: Event): void {
   formData.value.credit_limit_input = formatCents(cents);
 }
 
+function handlePaymentAmountInput(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  const digitsOnly = target.value.replace(/\D/g, "");
+
+  if (!digitsOnly) {
+    paymentFormData.value.amount_input = "";
+    return;
+  }
+
+  const cents = Number.parseInt(digitsOnly, 10);
+  paymentFormData.value.amount_input = formatCents(cents);
+}
+
+function handlePaymentPinInput(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  paymentFormData.value.pin = target.value.replace(/\D/g, "").slice(0, 6);
+}
+
 function handlePaymentDueDayInput(event: Event): void {
   const target = event.target as HTMLInputElement;
   formData.value.payment_due_day = target.value.replace(/\D/g, "").slice(0, 2);
@@ -191,12 +270,51 @@ function isDebtVisible(customerId: string): boolean {
   return debtVisibilityByCustomerId.value[customerId] ?? false;
 }
 
+function debouncedSearch(): void {
+  if (searchTimeoutId) clearTimeout(searchTimeoutId);
+
+  searchTimeoutId = setTimeout(() => {
+    loadCustomers();
+  }, 400);
+}
+
+function toggleSortOrder(column: SortBy): void {
+  if (sortBy.value === column) {
+    sortOrder.value = sortOrder.value === "asc" ? "desc" : "asc";
+  } else {
+    sortBy.value = column;
+    sortOrder.value = "asc";
+  }
+
+  currentPage.value = 1;
+  loadCustomers();
+}
+
+function getSortIcon(column: SortBy): string {
+  if (sortBy.value !== column) {
+    return "↕";
+  }
+
+  return sortOrder.value === "asc" ? "↑" : "↓";
+}
+
 async function loadCustomers(): Promise<void> {
   loadingList.value = true;
   listError.value = null;
 
   try {
-    const response = await authenticatedFetch("/api/customers");
+    const params = new URLSearchParams({
+      page: String(currentPage.value),
+      per_page: String(perPage.value),
+      sort_by: sortBy.value,
+      sort_order: sortOrder.value,
+    });
+
+    if (searchInput.value.trim()) {
+      params.append("search", searchInput.value.trim());
+    }
+
+    const response = await authenticatedFetch(`/api/customers?${params}`);
     const data = await response.json();
 
     if (!response.ok) {
@@ -205,11 +323,38 @@ async function loadCustomers(): Promise<void> {
     }
 
     customers.value = data.data as Customer[];
+    totalCustomers.value = data.pagination.total;
+    totalPages.value = data.pagination.total_pages;
+    currentPage.value = data.pagination.page;
   } catch (error) {
     console.error("Erro ao carregar clientes:", error);
     listError.value = "Erro de conexão ao carregar clientes.";
   } finally {
     loadingList.value = false;
+  }
+}
+
+function clearSearch(): void {
+  searchInput.value = "";
+  currentPage.value = 1;
+}
+
+function goToPage(page: number): void {
+  currentPage.value = page;
+  loadCustomers();
+}
+
+function goToPreviousPage(): void {
+  if (currentPage.value > 1) {
+    currentPage.value--;
+    loadCustomers();
+  }
+}
+
+function goToNextPage(): void {
+  if (currentPage.value < totalPages.value) {
+    currentPage.value++;
+    loadCustomers();
   }
 }
 
@@ -241,9 +386,29 @@ function openEditModal(customer: Customer): void {
   showModal.value = true;
 }
 
+function openPaymentModal(customer: Customer): void {
+  selectedPaymentCustomer.value = customer;
+  paymentFormData.value = {
+    amount_input: "",
+    pin: "",
+  };
+  paymentFormErrors.value = {};
+  showPaymentModal.value = true;
+}
+
 function closeModal(): void {
   showModal.value = false;
   formErrors.value = {};
+}
+
+function closePaymentModal(): void {
+  showPaymentModal.value = false;
+  selectedPaymentCustomer.value = null;
+  paymentFormData.value = {
+    amount_input: "",
+    pin: "",
+  };
+  paymentFormErrors.value = {};
 }
 
 function showSuccessToast(message: string): void {
@@ -286,6 +451,33 @@ function validateForm(): boolean {
   }
 
   return Object.keys(formErrors.value).length === 0;
+}
+
+function validatePaymentForm(): boolean {
+  paymentFormErrors.value = {};
+
+  if (!selectedPaymentCustomer.value) {
+    paymentFormErrors.value.submit = ["Cliente não selecionado"];
+    return false;
+  }
+
+  const amountCents = parseCurrencyToCents(paymentFormData.value.amount_input);
+
+  if (amountCents === null || amountCents <= 0) {
+    paymentFormErrors.value.amount_cents = ["Valor do pagamento deve ser maior que zero"];
+  } else if (amountCents > selectedPaymentCustomer.value.current_debt_cents) {
+    paymentFormErrors.value.amount_cents = [
+      `Valor não pode ser maior que ${formatCents(selectedPaymentCustomer.value.current_debt_cents)}`,
+    ];
+  }
+
+  if (!paymentFormData.value.pin.trim()) {
+    paymentFormErrors.value.pin = ["PIN é obrigatório"];
+  } else if (!/^\d{4,6}$/.test(paymentFormData.value.pin)) {
+    paymentFormErrors.value.pin = ["PIN deve conter entre 4 e 6 dígitos numéricos"];
+  }
+
+  return Object.keys(paymentFormErrors.value).length === 0;
 }
 
 async function submitForm(): Promise<void> {
@@ -343,6 +535,51 @@ async function submitForm(): Promise<void> {
     loadingSubmit.value = false;
   }
 }
+
+async function submitPaymentForm(): Promise<void> {
+  if (!validatePaymentForm()) {
+    return;
+  }
+
+  if (!selectedPaymentCustomer.value) {
+    return;
+  }
+
+  paymentLoading.value = true;
+  paymentFormErrors.value.submit = undefined;
+
+  const amountCents = parseCurrencyToCents(paymentFormData.value.amount_input);
+
+  const payload = {
+    amount_cents: amountCents,
+    pin: paymentFormData.value.pin,
+  };
+
+  try {
+    const response = await authenticatedFetch(`/api/customers/${selectedPaymentCustomer.value.id}/pay-debt`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      paymentFormErrors.value.submit = data.message || "Erro ao registrar pagamento.";
+      return;
+    }
+
+    closePaymentModal();
+    await loadCustomers();
+    showSuccessToast("Pagamento de fiado registrado com sucesso!");
+  } catch (error) {
+    console.error("Erro ao registrar pagamento:", error);
+    paymentFormErrors.value.submit = "Erro de conexão com o servidor";
+  } finally {
+    paymentLoading.value = false;
+  }
+}
 </script>
 
 <template>
@@ -351,7 +588,7 @@ async function submitForm(): Promise<void> {
     <div class="flex flex-1 flex-col">
       <AppHeader />
       <main class="flex-1 p-6">
-        <div class="flex items-center justify-between">
+        <div class="mb-6 flex items-center justify-between">
           <h1 class="text-3xl font-bold text-gray-900">Clientes</h1>
           <button
             type="button"
@@ -362,13 +599,33 @@ async function submitForm(): Promise<void> {
           </button>
         </div>
 
-        <div v-if="loadingList" class="mt-6 space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+        <!-- Search Bar -->
+        <div class="mb-6 flex gap-2">
+          <input
+            v-model="searchInput"
+            type="text"
+            placeholder="Buscar por nome ou telefone..."
+            class="flex-1 rounded border border-gray-300 px-4 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+          />
+          <button
+            v-if="searchInput"
+            type="button"
+            @click="clearSearch"
+            class="rounded bg-gray-200 px-4 py-2 font-medium text-gray-700 transition hover:bg-gray-300"
+          >
+            ✕ Limpar
+          </button>
+        </div>
+
+        <!-- Loading State -->
+        <div v-if="loadingList" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
           <div v-for="index in 6" :key="index" class="h-12 animate-pulse rounded bg-gray-100"></div>
         </div>
 
+        <!-- Error State -->
         <div
           v-else-if="listError"
-          class="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger"
+          class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger"
           role="alert"
         >
           <p>{{ listError }}</p>
@@ -381,23 +638,65 @@ async function submitForm(): Promise<void> {
           </button>
         </div>
 
+        <!-- Empty State -->
         <div
           v-else-if="customers.length === 0"
-          class="mt-6 rounded-lg border border-gray-200 bg-white p-6 text-center text-gray-600"
+          class="rounded-lg border border-gray-200 bg-white p-6 text-center text-gray-600"
         >
           Nenhum cliente cadastrado ainda.
         </div>
 
-        <div v-else class="mt-6 overflow-x-auto rounded-lg border border-gray-200 bg-white">
-          <table class="w-full min-w-[980px]">
+        <!-- Table -->
+        <div v-else class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+          <table class="w-full min-w-[1200px]">
             <thead class="bg-gray-50">
               <tr>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Nome</th>
+                <th
+                  class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                  @click="toggleSortOrder('name')"
+                >
+                  <span class="flex items-center gap-2">
+                    Nome
+                    <span class="text-xs">{{ getSortIcon("name") }}</span>
+                  </span>
+                </th>
                 <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Telefone</th>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Limite de Fiado</th>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Dia de Pagamento</th>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Fiado Atual</th>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
+                <th
+                  class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                  @click="toggleSortOrder('credit_limit_cents')"
+                >
+                  <span class="flex items-center gap-2">
+                    Limite de Fiado
+                    <span class="text-xs">{{ getSortIcon("credit_limit_cents") }}</span>
+                  </span>
+                </th>
+                <th
+                  class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                  @click="toggleSortOrder('payment_due_day')"
+                >
+                  <span class="flex items-center gap-2">
+                    Dia de Pagamento
+                    <span class="text-xs">{{ getSortIcon("payment_due_day") }}</span>
+                  </span>
+                </th>
+                <th
+                  class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                  @click="toggleSortOrder('current_debt_cents')"
+                >
+                  <span class="flex items-center gap-2">
+                    Fiado Atual
+                    <span class="text-xs">{{ getSortIcon("current_debt_cents") }}</span>
+                  </span>
+                </th>
+                <th
+                  class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                  @click="toggleSortOrder('is_active')"
+                >
+                  <span class="flex items-center gap-2">
+                    Status
+                    <span class="text-xs">{{ getSortIcon("is_active") }}</span>
+                  </span>
+                </th>
                 <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
               </tr>
             </thead>
@@ -460,6 +759,15 @@ async function submitForm(): Promise<void> {
                         />
                       </svg>
                     </button>
+                    <button
+                      v-if="customer.current_debt_cents > 0"
+                      type="button"
+                      :aria-label="'Registrar pagamento de fiado para ' + customer.name"
+                      class="rounded p-1.5 text-primary transition hover:bg-gray-100"
+                      @click="openPaymentModal(customer)"
+                    >
+                      💲
+                    </button>
                   </div>
                 </td>
                 <td class="px-6 py-4 text-sm">
@@ -502,6 +810,183 @@ async function submitForm(): Promise<void> {
           </table>
         </div>
 
+        <!-- Pagination Controls -->
+        <div
+          v-if="customers.length > 0 && totalPages > 1"
+          class="mt-6 flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4"
+        >
+          <div class="text-sm text-gray-600">
+            Mostrando
+            <span class="font-semibold">{{ (currentPage - 1) * perPage + 1 }}</span>
+            –
+            <span class="font-semibold">{{ Math.min(currentPage * perPage, totalCustomers) }}</span>
+            de <span class="font-semibold">{{ totalCustomers }}</span> clientes
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              :disabled="currentPage === 1"
+              @click="goToPreviousPage"
+              class="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition disabled:cursor-not-allowed disabled:opacity-50 hover:bg-gray-50"
+            >
+              ← Anterior
+            </button>
+
+            <div class="flex gap-1">
+              <button
+                v-for="page in totalPagesArray"
+                :key="page"
+                type="button"
+                @click="goToPage(page)"
+                :class="[
+                  'rounded px-2 py-1 text-sm font-medium transition',
+                  page === currentPage
+                    ? 'bg-primary text-white'
+                    : 'border border-gray-300 text-gray-700 hover:bg-gray-50',
+                ]"
+              >
+                {{ page }}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              :disabled="currentPage === totalPages"
+              @click="goToNextPage"
+              class="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition disabled:cursor-not-allowed disabled:opacity-50 hover:bg-gray-50"
+            >
+              Próxima →
+            </button>
+          </div>
+        </div>
+
+        <!-- Payment Modal -->
+        <div
+          v-if="showPaymentModal && selectedPaymentCustomer"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          @click.self="closePaymentModal"
+        >
+          <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <div class="mb-4 flex items-center justify-between">
+              <h2 class="text-xl font-bold text-gray-900">Registrar Pagamento de Fiado</h2>
+              <button
+                type="button"
+                class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+                aria-label="Fechar modal"
+                @click="closePaymentModal"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="mb-4 space-y-2 rounded bg-gray-50 p-3">
+              <div class="text-sm font-medium text-gray-700">{{ selectedPaymentCustomer.name }}</div>
+              <div class="text-sm text-gray-600">
+                Dívida atual:
+                <span class="font-semibold text-gray-900">
+                  {{ formatCents(selectedPaymentCustomer.current_debt_cents) }}
+                </span>
+              </div>
+            </div>
+
+            <div
+              v-if="paymentFormErrors.submit"
+              class="mb-4 rounded bg-red-100 p-3 text-sm text-danger"
+              role="alert"
+            >
+              {{ paymentFormErrors.submit }}
+            </div>
+
+            <form class="space-y-4" novalidate @submit.prevent="submitPaymentForm">
+              <div>
+                <label for="payment_amount" class="mb-1 block text-sm font-medium text-gray-700">
+                  Valor do Pagamento *
+                </label>
+                <input
+                  id="payment_amount"
+                  :value="paymentFormData.amount_input"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="R$ 0,00"
+                  class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  @input="handlePaymentAmountInput"
+                />
+                <div v-if="paymentFormErrors.amount_cents" class="mt-1 text-xs text-danger">
+                  {{ paymentFormErrors.amount_cents[0] }}
+                </div>
+              </div>
+
+              <div>
+                <label for="payment_pin" class="mb-1 block text-sm font-medium text-gray-700">
+                  PIN do Administrador *
+                </label>
+                <input
+                  id="payment_pin"
+                  v-model="paymentFormData.pin"
+                  type="password"
+                  inputmode="numeric"
+                  maxlength="6"
+                  placeholder="••••••"
+                  class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  @input="handlePaymentPinInput"
+                />
+                <div v-if="paymentFormErrors.pin" class="mt-1 text-xs text-danger">
+                  {{ paymentFormErrors.pin[0] }}
+                </div>
+              </div>
+
+              <div class="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  class="rounded border border-gray-300 px-4 py-2 font-medium text-gray-700 transition hover:bg-gray-50"
+                  @click="closePaymentModal"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  :disabled="paymentLoading"
+                  class="flex items-center gap-2 rounded bg-success px-4 py-2 font-medium text-white transition hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <svg
+                    v-if="paymentLoading"
+                    class="h-4 w-4 animate-spin"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  <span>{{ paymentLoading ? "Processando..." : "Confirmar Pagamento" }}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Create/Edit Modal -->
         <div
           v-if="showModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
