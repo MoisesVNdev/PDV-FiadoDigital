@@ -15,10 +15,11 @@ const productBaseSchema = z.object({
   weight_unit: weightUnitSchema.optional(),
   product_type_id: z.string().uuid().optional(),
   profit_margin: z.number().gt(0).lt(1).optional(),
-  price_cents: z.number().int().nonnegative(),
+  price_cents: z.number().int().positive().optional(),
   cost_price_cents: z.number().int().nonnegative(),
-  stock_quantity: z.number().int().nonnegative(),
+  stock_quantity: z.number().nonnegative(),
   min_stock_alert: z.number().int().nonnegative(),
+  is_bulk: z.boolean().optional().default(false),
   is_active: z.boolean().optional(),
 });
 

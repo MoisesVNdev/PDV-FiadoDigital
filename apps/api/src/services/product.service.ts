@@ -37,9 +37,11 @@ export class ProductService {
       }
     }
 
-    if (payload.product_type_id) {
-      const productType = await productTypeRepository.findById(payload.product_type_id);
+    const productType = payload.product_type_id
+      ? await productTypeRepository.findById(payload.product_type_id)
+      : null;
 
+    if (payload.product_type_id) {
       if (!productType) {
         throw new Error("Tipo de produto não encontrado");
       }
@@ -59,7 +61,17 @@ export class ProductService {
       }
     }
 
-    return productRepository.create(payload);
+    const resolvedPriceCents = this.resolvePriceCents(
+      payload.price_cents,
+      payload.cost_price_cents,
+      productType?.profit_margin ?? null,
+    );
+
+    return productRepository.create({
+      ...payload,
+      price_cents: resolvedPriceCents,
+      is_bulk: payload.is_bulk ?? false,
+    });
   }
 
   async update(id: string, payload: UpdateProductPayload) {
@@ -71,9 +83,19 @@ export class ProductService {
       }
     }
 
-    if (payload.product_type_id) {
-      const productType = await productTypeRepository.findById(payload.product_type_id);
+    const currentProduct = await productRepository.findById(id);
 
+    if (!currentProduct) {
+      throw new Error("Produto não encontrado");
+    }
+
+    const nextProductTypeId = payload.product_type_id ?? currentProduct.product_type_id ?? undefined;
+
+    const productType = nextProductTypeId
+      ? await productTypeRepository.findById(nextProductTypeId)
+      : null;
+
+    if (payload.product_type_id) {
       if (!productType) {
         throw new Error("Tipo de produto não encontrado");
       }
@@ -93,7 +115,18 @@ export class ProductService {
       }
     }
 
-    return productRepository.update(id, payload);
+    const nextCostPriceCents = payload.cost_price_cents ?? currentProduct.cost_price_cents;
+    const resolvedPriceCents = this.resolvePriceCents(
+      payload.price_cents,
+      nextCostPriceCents,
+      productType?.profit_margin ?? null,
+      currentProduct.price_cents,
+    );
+
+    return productRepository.update(id, {
+      ...payload,
+      price_cents: resolvedPriceCents,
+    });
   }
 
   async bulkUpdatePrice(payload: BulkPricePayload) {
@@ -133,5 +166,22 @@ export class ProductService {
 
   async deactivate(id: string) {
     return productRepository.softDelete(id);
+  }
+
+  private resolvePriceCents(
+    informedPriceCents: number | undefined,
+    costPriceCents: number,
+    productTypeProfitMargin: number | null,
+    fallbackPriceCents = 0,
+  ): number {
+    if (typeof informedPriceCents === "number") {
+      return informedPriceCents;
+    }
+
+    if (typeof productTypeProfitMargin === "number" && productTypeProfitMargin > 0 && productTypeProfitMargin < 1) {
+      return Math.round(costPriceCents / (1 - productTypeProfitMargin));
+    }
+
+    return fallbackPriceCents;
   }
 }

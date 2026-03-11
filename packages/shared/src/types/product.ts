@@ -17,6 +17,7 @@ export type Product = {
   cost_price_cents: number;
   stock_quantity: number;
   min_stock_alert: number;
+  is_bulk: boolean;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -33,10 +34,11 @@ export type CreateProductPayload = {
   weight_unit?: ProductWeightUnit;
   product_type_id?: string;
   profit_margin?: number;
-  price_cents: number;
+  price_cents?: number;
   cost_price_cents: number;
   stock_quantity: number;
   min_stock_alert: number;
+  is_bulk?: boolean;
   is_active?: boolean;
 };
 

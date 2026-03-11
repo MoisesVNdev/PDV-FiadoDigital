@@ -77,8 +77,9 @@ model Product {
   profit_margin   Float?
   price_cents     Int
   cost_price_cents Int
-  stock_quantity  Int       @default(0)
+  stock_quantity  Float     @default(0)
   min_stock_alert Int       @default(5)
+  is_bulk         Boolean   @default(false)
   is_active       Boolean   @default(true)
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
@@ -112,6 +113,7 @@ model Brand {
 model ProductType {
   id         String    @id @default(uuid())
   name       String    @unique
+  profit_margin Float?
   created_at DateTime  @default(now())
   updated_at DateTime  @updatedAt
   deleted_at DateTime?
@@ -175,7 +177,7 @@ model SaleItem {
   sale_id          String
   product_id       String
   product_name     String @default("Produto sem nome")
-  quantity         Int
+  quantity         Float
   unit_price_cents Int    // Snapshot do preço no ato da venda
   discount_cents   Int    @default(0)
   total_cents      Int

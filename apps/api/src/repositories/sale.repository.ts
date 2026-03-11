@@ -29,7 +29,7 @@ export class SaleRepository {
   async create(payload: CreateSalePayload) {
     const subtotalCents = payload.items.reduce(
       (sum, item) =>
-        sum + item.unit_price_cents * item.quantity - item.discount_cents,
+        sum + Math.round(item.unit_price_cents * item.quantity) - item.discount_cents,
       0,
     );
     const totalCents = subtotalCents - payload.discount_cents;
@@ -60,8 +60,7 @@ export class SaleRepository {
               quantity: item.quantity,
               unit_price_cents: item.unit_price_cents,
               discount_cents: item.discount_cents,
-              total_cents:
-                item.unit_price_cents * item.quantity - item.discount_cents,
+              total_cents: Math.round(item.unit_price_cents * item.quantity) - item.discount_cents,
             })),
           },
           payments: {
@@ -83,6 +82,7 @@ export class SaleRepository {
           select: {
             id: true,
             name: true,
+            is_bulk: true,
             stock_quantity: true,
             min_stock_alert: true,
           },
@@ -92,12 +92,24 @@ export class SaleRepository {
           throw new Error(`Produto não encontrado: ${item.product_id}`);
         }
 
+        if (!product.is_bulk && !Number.isInteger(item.quantity)) {
+          throw new Error(`Dados inválidos: quantidade inválida para o produto unitário ${product.name}.`);
+        }
+
+        const requiredQuantity = product.is_bulk ? item.quantity : Math.round(item.quantity);
+
         // Validar estoque disponível antes de decrementar
-        if (product.stock_quantity < item.quantity) {
+        if (product.stock_quantity < requiredQuantity) {
+          if (product.is_bulk) {
+            throw new Error(
+              `Estoque insuficiente para o produto: ${product.name}. Disponível: ${this.formatBulkStock(product.stock_quantity)} kg.`,
+            );
+          }
+
           throw new Error(`Estoque insuficiente para o produto: ${product.name}.`);
         }
 
-        const newStockQuantity = product.stock_quantity - item.quantity;
+        const newStockQuantity = product.stock_quantity - requiredQuantity;
 
         await tx.product.update({
           where: { id: item.product_id },
@@ -141,6 +153,13 @@ export class SaleRepository {
       // Retornar venda com informações de estoque baixo
       return { sale, lowStockProducts };
     });
+  }
+
+  private formatBulkStock(value: number): string {
+    return new Intl.NumberFormat("pt-BR", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 3,
+    }).format(value);
   }
 
   private async buildProductNameMap(

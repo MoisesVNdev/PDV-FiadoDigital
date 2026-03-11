@@ -21,7 +21,10 @@ export class ProductTypeService {
       throw new Error("Tipo de produto já existe");
     }
 
-    return productTypeRepository.create({ name: normalizedName });
+    return productTypeRepository.create({
+      name: normalizedName,
+      profit_margin: this.normalizeProfitMargin(payload.profit_margin),
+    });
   }
 
   async update(id: string, payload: UpdateProductTypePayload) {
@@ -44,7 +47,18 @@ export class ProductTypeService {
         throw new Error("Tipo de produto já existe");
       }
 
-      return productTypeRepository.update(id, { name: normalizedName });
+      return productTypeRepository.update(id, {
+        name: normalizedName,
+        ...(payload.profit_margin !== undefined
+          ? { profit_margin: this.normalizeProfitMargin(payload.profit_margin) }
+          : {}),
+      });
+    }
+
+    if (payload.profit_margin !== undefined) {
+      return productTypeRepository.update(id, {
+        profit_margin: this.normalizeProfitMargin(payload.profit_margin),
+      });
     }
 
     return productType;
@@ -58,5 +72,13 @@ export class ProductTypeService {
     }
 
     return productTypeRepository.softDelete(id);
+  }
+
+  private normalizeProfitMargin(margin?: number | null): number | null {
+    if (margin === null || margin === undefined) {
+      return null;
+    }
+
+    return margin / 100;
   }
 }

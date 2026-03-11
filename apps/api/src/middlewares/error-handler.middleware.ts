@@ -21,7 +21,7 @@ function getStatusCode(err: Error): number {
   if (err.message.includes("Senha incorreta. Alteração não autorizada.")) return 403;
   if (err.message.includes("Saldo de crédito insuficiente")) return 422;
   if (err.message.includes("Chave Pix não configurada")) return 422;
-  if (err.message.includes("Estoque insuficiente")) return 400;
+  if (err.message.includes("Estoque insuficiente")) return 422;
   if (err.message.includes("inválid")) return 400;
   if (err.message.includes("Não é possível registrar uma venda para um cliente inativo")) return 400;
   if (err.message.includes("já existe")) return 409;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { formatCents, parseCentsFromString, type Brand, type Product, type ProductType } from "@pdv/shared";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
@@ -21,6 +21,7 @@ interface ProductFormData {
   cost_price_input: string;
   stock_quantity: string;
   min_stock_alert: string;
+  is_bulk: boolean;
 }
 
 interface ProductFormErrors {
@@ -40,8 +41,19 @@ interface ProductFormErrors {
 
 interface ProductTypeFormErrors {
   name?: string[];
+  profit_margin?: string[];
   submit?: string;
 }
+
+type ProductSortKey = "name" | "brand" | "type" | "price" | "stock";
+type ProductTypeSortKey = "name" | "profit_margin";
+type PriceSortKey = "name" | "type" | "brand" | "cost" | "margin" | "sale" | "stock";
+type SortDirection = "asc" | "desc";
+
+type SortState<K extends string> = {
+  key: K;
+  direction: SortDirection;
+};
 
 interface BrandFormErrors {
   name?: string[];
@@ -88,6 +100,7 @@ const productFormData = ref<ProductFormData>({
   cost_price_input: "",
   stock_quantity: "0",
   min_stock_alert: "5",
+  is_bulk: false,
 });
 const productFormErrors = ref<ProductFormErrors>({});
 
@@ -110,6 +123,7 @@ const showProductTypeModal = ref(false);
 const isProductTypeEditMode = ref(false);
 const editingProductTypeId = ref<string | null>(null);
 const productTypeName = ref("");
+const productTypeProfitMarginInput = ref("");
 const loadingProductTypeSubmit = ref(false);
 const productTypeFormErrors = ref<ProductTypeFormErrors>({});
 
@@ -121,6 +135,12 @@ const bulkPriceFormData = ref<BulkPriceFormData>({
   brand_id: "",
   margin_percentage: "",
 });
+const bulkBrands = ref<Brand[]>([]);
+const loadingBulkBrands = ref(false);
+
+const productSort = ref<SortState<ProductSortKey>>({ key: "name", direction: "asc" });
+const productTypeSort = ref<SortState<ProductTypeSortKey>>({ key: "name", direction: "asc" });
+const priceSort = ref<SortState<PriceSortKey>>({ key: "name", direction: "asc" });
 
 const showSinglePriceModal = ref(false);
 const singlePriceLoading = ref(false);
@@ -151,6 +171,117 @@ const canViewCostPrice = computed(() => {
 });
 
 const canViewSalePriceField = computed(() => !isStockist.value);
+const percentFormatter = new Intl.NumberFormat("pt-BR", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+const stockFormatter = new Intl.NumberFormat("pt-BR", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 3,
+});
+
+const selectedProductType = computed(() => {
+  if (!productFormData.value.product_type_id) {
+    return null;
+  }
+
+  return productTypes.value.find((item) => item.id === productFormData.value.product_type_id) ?? null;
+});
+
+const selectedProductTypeProfitMargin = computed(() => selectedProductType.value?.profit_margin ?? null);
+
+const autoCalculatedSalePriceCents = computed(() => {
+  const costPriceCents = parseCurrencyInputToCents(productFormData.value.cost_price_input);
+  const margin = selectedProductTypeProfitMargin.value;
+
+  if (margin === null || margin <= 0 || margin >= 1) {
+    return null;
+  }
+
+  if (costPriceCents === null || costPriceCents <= 0) {
+    return null;
+  }
+
+  return Math.round(costPriceCents / (1 - margin));
+});
+
+const isSalePriceAutoCalculated = computed(() => autoCalculatedSalePriceCents.value !== null);
+
+const displayedSalePriceInput = computed(() => {
+  if (isSalePriceAutoCalculated.value && autoCalculatedSalePriceCents.value !== null) {
+    return formatCents(autoCalculatedSalePriceCents.value);
+  }
+
+  return productFormData.value.price_input;
+});
+
+const sortedProducts = computed(() => {
+  const direction = productSort.value.direction === "asc" ? 1 : -1;
+
+  return [...products.value].sort((left, right) => {
+    switch (productSort.value.key) {
+      case "name":
+        return direction * left.name.localeCompare(right.name, "pt-BR");
+      case "brand": {
+        const leftValue = left.brand?.name ?? "";
+        const rightValue = right.brand?.name ?? "";
+        return direction * leftValue.localeCompare(rightValue, "pt-BR");
+      }
+      case "type": {
+        const leftValue = left.product_type?.name ?? "";
+        const rightValue = right.product_type?.name ?? "";
+        return direction * leftValue.localeCompare(rightValue, "pt-BR");
+      }
+      case "price":
+        return direction * (left.price_cents - right.price_cents);
+      case "stock":
+        return direction * (left.stock_quantity - right.stock_quantity);
+    }
+  });
+});
+
+const sortedProductTypes = computed(() => {
+  const direction = productTypeSort.value.direction === "asc" ? 1 : -1;
+
+  return [...productTypes.value].sort((left, right) => {
+    if (productTypeSort.value.key === "name") {
+      return direction * left.name.localeCompare(right.name, "pt-BR");
+    }
+
+    const leftMargin = left.profit_margin ?? -1;
+    const rightMargin = right.profit_margin ?? -1;
+    return direction * (leftMargin - rightMargin);
+  });
+});
+
+const sortedProductsForPrices = computed(() => {
+  const direction = priceSort.value.direction === "asc" ? 1 : -1;
+
+  return [...products.value].sort((left, right) => {
+    switch (priceSort.value.key) {
+      case "name":
+        return direction * left.name.localeCompare(right.name, "pt-BR");
+      case "type": {
+        const leftValue = left.product_type?.name ?? "";
+        const rightValue = right.product_type?.name ?? "";
+        return direction * leftValue.localeCompare(rightValue, "pt-BR");
+      }
+      case "brand": {
+        const leftValue = left.brand?.name ?? "";
+        const rightValue = right.brand?.name ?? "";
+        return direction * leftValue.localeCompare(rightValue, "pt-BR");
+      }
+      case "cost":
+        return direction * (left.cost_price_cents - right.cost_price_cents);
+      case "margin":
+        return direction * ((left.profit_margin ?? -1) - (right.profit_margin ?? -1));
+      case "sale":
+        return direction * (left.price_cents - right.price_cents);
+      case "stock":
+        return direction * (left.stock_quantity - right.stock_quantity);
+    }
+  });
+});
 
 const normalizedStockAddition = computed(() => {
   const parsed = Number.parseInt(stockAdditionAmount.value, 10);
@@ -226,6 +357,24 @@ onUnmounted(() => {
   window.removeEventListener("keydown", handleEscapeKey);
 });
 
+watch(
+  () => bulkPriceFormData.value.product_type_id,
+  async (nextProductTypeId, previousProductTypeId) => {
+    if (nextProductTypeId === previousProductTypeId) {
+      return;
+    }
+
+    bulkPriceFormData.value.brand_id = "";
+
+    if (!nextProductTypeId) {
+      bulkBrands.value = [];
+      return;
+    }
+
+    await loadBrandsForBulkModal(nextProductTypeId);
+  },
+);
+
 function handleEscapeKey(event: KeyboardEvent): void {
   if (event.key !== "Escape") {
     return;
@@ -287,6 +436,10 @@ function parseCurrencyInputToCents(rawValue: string): number | null {
 }
 
 function formatWeight(product: Product): string {
+  if (product.is_bulk) {
+    return "A granel (kg)";
+  }
+
   if (product.weight_unit === "un") {
     return "un";
   }
@@ -299,11 +452,58 @@ function formatWeight(product: Product): string {
 }
 
 function formatMargin(product: Product): string {
-  if (product.profit_margin === null) {
+  return formatProfitMargin(product.profit_margin);
+}
+
+function formatStock(quantity: number, isBulk: boolean): string {
+  if (isBulk) {
+    return `${stockFormatter.format(quantity)} kg`;
+  }
+
+  return `${Math.trunc(quantity)} un`;
+}
+
+function formatProfitMargin(value: number | null): string {
+  if (value === null) {
     return "—";
   }
 
-  return `${Math.round(product.profit_margin * 100)}%`;
+  return `${percentFormatter.format(value * 100)}%`;
+}
+
+function toggleProductSort(key: ProductSortKey): void {
+  if (productSort.value.key !== key) {
+    productSort.value = { key, direction: "asc" };
+    return;
+  }
+
+  productSort.value.direction = productSort.value.direction === "asc" ? "desc" : "asc";
+}
+
+function toggleProductTypeSort(key: ProductTypeSortKey): void {
+  if (productTypeSort.value.key !== key) {
+    productTypeSort.value = { key, direction: "asc" };
+    return;
+  }
+
+  productTypeSort.value.direction = productTypeSort.value.direction === "asc" ? "desc" : "asc";
+}
+
+function togglePriceSort(key: PriceSortKey): void {
+  if (priceSort.value.key !== key) {
+    priceSort.value = { key, direction: "asc" };
+    return;
+  }
+
+  priceSort.value.direction = priceSort.value.direction === "asc" ? "desc" : "asc";
+}
+
+function getSortIndicator<K extends string>(sort: SortState<K>, key: K): string {
+  if (sort.key !== key) {
+    return "↕";
+  }
+
+  return sort.direction === "asc" ? "↑" : "↓";
 }
 
 async function loadProducts(): Promise<void> {
@@ -387,6 +587,7 @@ function openCreateProductModal(): void {
     cost_price_input: "",
     stock_quantity: "0",
     min_stock_alert: "5",
+    is_bulk: false,
   };
   productFormErrors.value = {};
   closeInlineBrandCreate();
@@ -401,13 +602,14 @@ function openEditProductModal(product: Product): void {
     brand_id: product.brand_id ?? "",
     description: product.description ?? "",
     barcode: product.barcode ?? "",
-    weight_unit: (product.weight_unit as WeightUnit | null) ?? "",
+    weight_unit: product.is_bulk ? "kg" : (product.weight_unit as WeightUnit | null) ?? "",
     weight_value: product.weight_value !== null ? String(product.weight_value) : "",
     product_type_id: product.product_type_id ?? "",
     price_input: formatCents(product.price_cents),
     cost_price_input: formatCents(product.cost_price_cents),
     stock_quantity: String(product.stock_quantity),
     min_stock_alert: String(product.min_stock_alert),
+    is_bulk: product.is_bulk,
   };
   productFormErrors.value = {};
   closeInlineBrandCreate();
@@ -449,6 +651,18 @@ function handleWeightUnitChange(event: Event): void {
   if (productFormData.value.weight_value === "0") {
     productFormData.value.weight_value = "";
   }
+}
+
+function handleBulkFlagChange(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  productFormData.value.is_bulk = target.checked;
+
+  if (!target.checked) {
+    return;
+  }
+
+  productFormData.value.weight_unit = "kg";
+  productFormData.value.weight_value = "";
 }
 
 function handleWeightValueInput(event: Event): void {
@@ -541,10 +755,12 @@ function validateProductForm(): boolean {
   }
 
   if (data.weight_unit && data.weight_unit !== "un" && !data.weight_value) {
-    productFormErrors.value.weight_value = ["Gramagem é obrigatória para esta unidade"];
+    if (!data.is_bulk) {
+      productFormErrors.value.weight_value = ["Gramagem é obrigatória para esta unidade"];
+    }
   }
 
-  if (data.weight_value) {
+  if (data.weight_value && !data.is_bulk) {
     const parsedWeight = Number.parseFloat(data.weight_value);
 
     if (Number.isNaN(parsedWeight)) {
@@ -564,7 +780,7 @@ function validateProductForm(): boolean {
     }
   }
 
-  if (canViewSalePriceField.value) {
+  if (canViewSalePriceField.value && !isSalePriceAutoCalculated.value) {
     const salePriceCents = parseCurrencyInputToCents(data.price_input);
     if (salePriceCents === null || salePriceCents <= 0) {
       productFormErrors.value.price_cents = ["Preço de venda deve ser maior que zero"];
@@ -579,10 +795,14 @@ function validateProductForm(): boolean {
   }
 
   if (!isProductEditMode.value) {
-    const initialQuantity = Number.parseInt(data.stock_quantity, 10);
+    const initialQuantity = Number.parseFloat(data.stock_quantity.replace(",", "."));
 
     if (Number.isNaN(initialQuantity) || initialQuantity < 0) {
-      productFormErrors.value.stock_quantity = ["Quantidade inicial deve ser inteiro não-negativo"];
+      productFormErrors.value.stock_quantity = ["Quantidade inicial deve ser não-negativa"];
+    }
+
+    if (!data.is_bulk && !Number.isInteger(initialQuantity)) {
+      productFormErrors.value.stock_quantity = ["Para produto unitário, a quantidade inicial deve ser inteira"];
     }
   }
 
@@ -611,8 +831,10 @@ async function submitProductForm(): Promise<void> {
     brand_id: productFormData.value.brand_id || undefined,
     barcode: productFormData.value.barcode || undefined,
     description: productFormData.value.description.trim() || undefined,
-    weight_unit: productFormData.value.weight_unit || undefined,
-    weight_value: productFormData.value.weight_unit
+    weight_unit: productFormData.value.is_bulk ? "kg" : productFormData.value.weight_unit || undefined,
+    weight_value: productFormData.value.is_bulk
+      ? undefined
+      : productFormData.value.weight_unit
       ? productFormData.value.weight_unit === "un"
         ? 0
         : productFormData.value.weight_value
@@ -621,10 +843,15 @@ async function submitProductForm(): Promise<void> {
       : undefined,
     product_type_id: productFormData.value.product_type_id || undefined,
     min_stock_alert: Number.parseInt(productFormData.value.min_stock_alert, 10),
+    is_bulk: productFormData.value.is_bulk,
   };
 
   if (canViewSalePriceField.value) {
-    payload.price_cents = parsedSalePrice ?? 0;
+    if (isSalePriceAutoCalculated.value && autoCalculatedSalePriceCents.value !== null) {
+      payload.price_cents = autoCalculatedSalePriceCents.value;
+    } else {
+      payload.price_cents = parsedSalePrice ?? 0;
+    }
   } else {
     payload.price_cents = isProductEditMode.value && editingProduct.value ? editingProduct.value.price_cents : 0;
   }
@@ -638,7 +865,7 @@ async function submitProductForm(): Promise<void> {
   }
 
   if (!isProductEditMode.value) {
-    payload.stock_quantity = Number.parseInt(productFormData.value.stock_quantity, 10);
+    payload.stock_quantity = Number.parseFloat(productFormData.value.stock_quantity.replace(",", "."));
   }
 
   try {
@@ -792,6 +1019,7 @@ function openCreateProductTypeModal(): void {
   isProductTypeEditMode.value = false;
   editingProductTypeId.value = null;
   productTypeName.value = "";
+  productTypeProfitMarginInput.value = "";
   productTypeFormErrors.value = {};
   showProductTypeModal.value = true;
 }
@@ -800,6 +1028,9 @@ function openEditProductTypeModal(item: ProductType): void {
   isProductTypeEditMode.value = true;
   editingProductTypeId.value = item.id;
   productTypeName.value = item.name;
+  productTypeProfitMarginInput.value = item.profit_margin !== null
+    ? percentFormatter.format(item.profit_margin * 100)
+    : "";
   productTypeFormErrors.value = {};
   showProductTypeModal.value = true;
 }
@@ -820,7 +1051,28 @@ function validateProductTypeForm(): boolean {
     productTypeFormErrors.value.name = ["Nome deve ter no máximo 50 caracteres"];
   }
 
+  if (productTypeProfitMarginInput.value.trim()) {
+    const normalized = productTypeProfitMarginInput.value.replace(",", ".");
+    const hasValidFormat = /^\d+(\.\d{1,2})?$/.test(normalized);
+    const margin = Number.parseFloat(normalized);
+
+    if (!hasValidFormat || Number.isNaN(margin) || margin < 0.01 || margin > 99.99) {
+      productTypeFormErrors.value.profit_margin = ["Margem deve estar entre 0,01% e 99,99%."];
+    }
+  }
+
   return Object.keys(productTypeFormErrors.value).length === 0;
+}
+
+function handleProductTypeProfitMarginInput(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  const normalized = target.value.replace(/,/g, ".");
+
+  if (!/^\d*(\.\d{0,2})?$/.test(normalized)) {
+    return;
+  }
+
+  productTypeProfitMarginInput.value = normalized;
 }
 
 async function submitProductTypeForm(): Promise<void> {
@@ -838,12 +1090,19 @@ async function submitProductTypeForm(): Promise<void> {
       : "/api/product-types";
     const method = isProductTypeEditMode.value ? "PUT" : "POST";
 
+    const parsedMargin = productTypeProfitMarginInput.value.trim()
+      ? Number.parseFloat(productTypeProfitMarginInput.value.replace(",", "."))
+      : null;
+
     const response = await authenticatedFetch(url, {
       method,
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ name: productTypeName.value.trim() }),
+      body: JSON.stringify({
+        name: productTypeName.value.trim(),
+        profit_margin: parsedMargin,
+      }),
     });
     const data = await response.json();
 
@@ -898,6 +1157,7 @@ function openBulkPriceModal(): void {
     margin_percentage: "",
   };
   bulkPriceError.value = null;
+  bulkBrands.value = [];
   showBulkPriceModal.value = true;
 }
 
@@ -905,6 +1165,30 @@ function closeBulkPriceModal(): void {
   showBulkPriceModal.value = false;
   bulkPriceLoading.value = false;
   bulkPriceError.value = null;
+}
+
+async function loadBrandsForBulkModal(productTypeId: string): Promise<void> {
+  loadingBulkBrands.value = true;
+  bulkPriceError.value = null;
+
+  try {
+    const response = await authenticatedFetch(`/api/brands?product_type_id=${encodeURIComponent(productTypeId)}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      bulkPriceError.value = data.message || "Não foi possível carregar as marcas para o tipo selecionado.";
+      bulkBrands.value = [];
+      return;
+    }
+
+    bulkBrands.value = data.data as Brand[];
+  } catch (error) {
+    console.error("Erro ao carregar marcas por tipo:", error);
+    bulkPriceError.value = "Erro de conexão ao carregar marcas.";
+    bulkBrands.value = [];
+  } finally {
+    loadingBulkBrands.value = false;
+  }
 }
 
 function handleBulkMarginInput(event: Event): void {
@@ -1204,17 +1488,42 @@ async function submitSinglePrice(): Promise<void> {
               <thead class="bg-gray-50">
                 <tr>
                   <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Código de Barras</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Nome</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Marca</th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('name')">
+                      Nome
+                      <span>{{ getSortIndicator(productSort, 'name') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('brand')">
+                      Marca
+                      <span>{{ getSortIndicator(productSort, 'brand') }}</span>
+                    </button>
+                  </th>
                   <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Gramagem</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Tipo</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Preço</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Estoque</th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('type')">
+                      Tipo
+                      <span>{{ getSortIndicator(productSort, 'type') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('price')">
+                      Preço
+                      <span>{{ getSortIndicator(productSort, 'price') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('stock')">
+                      Estoque
+                      <span>{{ getSortIndicator(productSort, 'stock') }}</span>
+                    </button>
+                  </th>
                   <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
-                <tr v-for="product in products" :key="product.id" class="hover:bg-gray-50">
+                <tr v-for="product in sortedProducts" :key="product.id" class="hover:bg-gray-50">
                   <td class="px-6 py-4 text-sm text-gray-700">{{ product.barcode ?? "-" }}</td>
                   <td class="px-6 py-4 text-sm text-gray-900">{{ product.name }}</td>
                   <td class="px-6 py-4 text-sm text-gray-600">{{ product.brand?.name ?? "—" }}</td>
@@ -1228,7 +1537,7 @@ async function submitSinglePrice(): Promise<void> {
                         product.stock_quantity < product.min_stock_alert ? 'text-danger' : 'text-gray-700',
                       ]"
                     >
-                      {{ product.stock_quantity }}
+                      {{ formatStock(product.stock_quantity, product.is_bulk) }}
                     </span>
                   </td>
                   <td class="px-6 py-4 text-center">
@@ -1288,13 +1597,29 @@ async function submitSinglePrice(): Promise<void> {
             <table class="w-full min-w-[640px]">
               <thead class="bg-gray-50">
                 <tr>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Nome</th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="toggleProductTypeSort('name')">
+                      Nome
+                      <span>{{ getSortIndicator(productTypeSort, 'name') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1"
+                      @click="toggleProductTypeSort('profit_margin')"
+                    >
+                      Margem %
+                      <span>{{ getSortIndicator(productTypeSort, 'profit_margin') }}</span>
+                    </button>
+                  </th>
                   <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
-                <tr v-for="item in productTypes" :key="item.id" class="hover:bg-gray-50">
+                <tr v-for="item in sortedProductTypes" :key="item.id" class="hover:bg-gray-50">
                   <td class="px-6 py-4 text-sm text-gray-900">{{ item.name }}</td>
+                  <td class="px-6 py-4 text-sm text-gray-700">{{ formatProfitMargin(item.profit_margin) }}</td>
                   <td class="px-6 py-4">
                     <div class="flex items-center justify-center gap-2">
                       <button
@@ -1340,17 +1665,54 @@ async function submitSinglePrice(): Promise<void> {
             <table class="w-full min-w-[1120px]">
               <thead class="bg-gray-50">
                 <tr>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Tipo</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Marca</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Custo</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Margem %</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Preço de Venda</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Estoque</th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('name')">
+                      Nome
+                      <span>{{ getSortIndicator(priceSort, 'name') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('type')">
+                      Tipo
+                      <span>{{ getSortIndicator(priceSort, 'type') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('brand')">
+                      Marca
+                      <span>{{ getSortIndicator(priceSort, 'brand') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('cost')">
+                      Custo
+                      <span>{{ getSortIndicator(priceSort, 'cost') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('margin')">
+                      Margem %
+                      <span>{{ getSortIndicator(priceSort, 'margin') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('sale')">
+                      Preço de Venda
+                      <span>{{ getSortIndicator(priceSort, 'sale') }}</span>
+                    </button>
+                  </th>
+                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                    <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('stock')">
+                      Estoque
+                      <span>{{ getSortIndicator(priceSort, 'stock') }}</span>
+                    </button>
+                  </th>
                   <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
-                <tr v-for="product in products" :key="product.id" class="hover:bg-gray-50">
+                <tr v-for="product in sortedProductsForPrices" :key="product.id" class="hover:bg-gray-50">
+                  <td class="px-6 py-4 text-sm text-gray-700">{{ product.name }}</td>
                   <td class="px-6 py-4 text-sm text-gray-700">{{ product.product_type?.name ?? "-" }}</td>
                   <td class="px-6 py-4 text-sm text-gray-700">{{ product.brand?.name ?? "—" }}</td>
                   <td class="px-6 py-4 text-sm text-gray-700">{{ formatCents(product.cost_price_cents) }}</td>
@@ -1363,7 +1725,7 @@ async function submitSinglePrice(): Promise<void> {
                         product.stock_quantity < product.min_stock_alert ? 'text-danger' : 'text-gray-700',
                       ]"
                     >
-                      {{ product.stock_quantity }}
+                      {{ formatStock(product.stock_quantity, product.is_bulk) }}
                     </span>
                   </td>
                   <td class="px-6 py-4 text-center">
@@ -1538,11 +1900,26 @@ async function submitSinglePrice(): Promise<void> {
                   type="text"
                   inputmode="decimal"
                   placeholder="Ex.: 500 ou 1.5"
-                  :disabled="productFormData.weight_unit === 'un'"
+                  :disabled="productFormData.weight_unit === 'un' || productFormData.is_bulk"
                   class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-gray-100"
                   @input="handleWeightValueInput"
                 />
                 <p v-if="productFormErrors.weight_value" class="mt-1 text-xs text-danger">{{ productFormErrors.weight_value[0] }}</p>
+              </div>
+
+              <div class="md:col-span-2 rounded border border-gray-200 bg-surface px-4 py-3">
+                <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    :checked="productFormData.is_bulk"
+                    class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                    @change="handleBulkFlagChange"
+                  />
+                  Produto a Granel
+                </label>
+                <p class="mt-1 text-xs text-gray-600">
+                  Marque se este produto é vendido por peso (ex.: carnes, queijos, frios).
+                </p>
               </div>
 
               <div>
@@ -1560,16 +1937,20 @@ async function submitSinglePrice(): Promise<void> {
               </div>
 
               <div v-if="canViewSalePriceField">
-                <label for="product_price" class="mb-1 block text-sm font-medium text-gray-700">Preço de Venda *</label>
+                <label for="product_price" class="mb-1 block text-sm font-medium text-gray-700">Preço de Venda</label>
                 <input
                   id="product_price"
-                  :value="productFormData.price_input"
+                  :value="displayedSalePriceInput"
                   type="text"
                   inputmode="numeric"
                   placeholder="R$ 0,00"
-                  class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  :readonly="isSalePriceAutoCalculated"
+                  class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 read-only:cursor-not-allowed read-only:bg-gray-100"
                   @input="handlePriceInput"
                 />
+                <p v-if="isSalePriceAutoCalculated" class="mt-1 text-xs text-gray-600">
+                  Valor calculado automaticamente pela margem do tipo selecionado.
+                </p>
                 <p v-if="productFormErrors.price_cents" class="mt-1 text-xs text-danger">{{ productFormErrors.price_cents[0] }}</p>
               </div>
 
@@ -1844,6 +2225,24 @@ async function submitSinglePrice(): Promise<void> {
                 <p v-if="productTypeFormErrors.name" class="mt-1 text-xs text-danger">{{ productTypeFormErrors.name[0] }}</p>
               </div>
 
+              <div>
+                <label for="product_type_profit_margin" class="mb-1 block text-sm font-medium text-gray-700">
+                  Margem de Lucro (%)
+                </label>
+                <input
+                  id="product_type_profit_margin"
+                  :value="productTypeProfitMarginInput"
+                  type="text"
+                  inputmode="decimal"
+                  placeholder="Ex.: 35 ou 10,50"
+                  class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  @input="handleProductTypeProfitMarginInput"
+                />
+                <p v-if="productTypeFormErrors.profit_margin" class="mt-1 text-xs text-danger">
+                  {{ productTypeFormErrors.profit_margin[0] }}
+                </p>
+              </div>
+
               <div class="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
@@ -1921,10 +2320,12 @@ async function submitSinglePrice(): Promise<void> {
                 <select
                   id="bulk_brand"
                   v-model="bulkPriceFormData.brand_id"
+                  :disabled="!bulkPriceFormData.product_type_id || loadingBulkBrands"
                   class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
-                  <option value="">Todas</option>
-                  <option v-for="item in brands" :key="item.id" :value="item.id">
+                  <option v-if="!bulkPriceFormData.product_type_id" value="">Selecione um tipo primeiro</option>
+                  <option v-else value="">Todas</option>
+                  <option v-for="item in bulkBrands" :key="item.id" :value="item.id">
                     {{ item.name }}
                   </option>
                 </select>

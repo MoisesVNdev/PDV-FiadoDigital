@@ -4,9 +4,13 @@ import { BrandService } from "../services/brand.service.js";
 const brandService = new BrandService();
 
 export class BrandController {
-  async list(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const brands = await brandService.list();
+      const productTypeId =
+        typeof req.query.product_type_id === "string"
+          ? req.query.product_type_id.trim()
+          : undefined;
+      const brands = await brandService.list(productTypeId || undefined);
       res.json({ success: true, data: brands });
     } catch (error) {
       next(error);

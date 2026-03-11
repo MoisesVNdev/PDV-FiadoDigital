@@ -17,12 +17,11 @@ import { useWebSocket } from "@/composables/use-websocket.js";
 import { useAuthStore } from "@/stores/auth.store.js";
 import { useSaleStore } from "@/stores/sale.store.js";
 
-type ManagerPinAction = "remove-item" | "cancel-sale" | "high-discount";
+type ManagerPinAction = "remove-item" | "cancel-sale";
 
 type PendingManagerPin = {
   action: ManagerPinAction;
   productId?: string;
-  discountCents?: number;
 };
 
 type PaymentEntry = {
@@ -69,9 +68,10 @@ const productLoading = ref(false);
 
 const selectedItemProductId = ref<string | null>(null);
 
-const discountInput = ref("");
-const discountError = ref<string | null>(null);
-const discountLimitPercentage = ref(10);
+const showChangeDiscountInput = ref(false);
+const changeDiscountInput = ref("");
+const changeDiscountError = ref<string | null>(null);
+const changeDiscountInputRef = ref<HTMLInputElement | null>(null);
 
 const showManagerPinModal = ref(false);
 const managerPin = ref("");
@@ -81,7 +81,8 @@ const pendingManagerPinAction = ref<PendingManagerPin | null>(null);
 
 const showWeightModal = ref(false);
 const weightedProduct = ref<Product | null>(null);
-const weightedQuantityInput = ref("1,000");
+const rawWeight = ref(0);
+const weightedInputRef = ref<HTMLInputElement | null>(null);
 const weightedModalError = ref<string | null>(null);
 
 const showProductSearchModal = ref(false);
@@ -189,8 +190,50 @@ const weightedTotalCents = computed(() => {
     return 0;
   }
 
-  const weightInKg = parseWeightInputToKg(weightedQuantityInput.value);
-  return Math.round(weightInKg * weightedProduct.value.price_cents);
+  return Math.round(weightKg.value * weightedProduct.value.price_cents);
+});
+
+const weightKg = computed(() => rawWeight.value / 1000);
+
+const weightedInputDisplay = computed(() => {
+  return weightKg.value.toLocaleString("pt-BR", {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
+  });
+});
+
+const weightedQuantityDisplay = computed(() => {
+  const weightInKg = weightKg.value;
+
+  if (weightInKg <= 0) {
+    return "0,000 kg";
+  }
+
+  return `${weightInKg.toFixed(3).replace(".", ",")} kg`;
+});
+
+const weightedStockAvailableDisplay = computed(() => {
+  if (!weightedProduct.value) {
+    return "0 kg";
+  }
+
+  return formatStockQuantity(weightedProduct.value.stock_quantity, true);
+});
+
+const isWeightedOverStock = computed(() => {
+  if (!weightedProduct.value) {
+    return false;
+  }
+
+  return weightKg.value > weightedProduct.value.stock_quantity;
+});
+
+const weightedOverStockMessage = computed(() => {
+  if (!isWeightedOverStock.value || !weightedProduct.value) {
+    return null;
+  }
+
+  return `Peso informado supera o estoque disponível (${weightedStockAvailableDisplay.value}).`;
 });
 
 const customerCanUseFiado = computed(() => {
@@ -309,6 +352,23 @@ const hasPixPayment = computed(() => {
   return paymentRows.value.some((row) => row.method === PAYMENT_METHODS.PIX);
 });
 
+const isCashOnlyPayment = computed(() => {
+  if (paymentRows.value.length !== 1) {
+    return false;
+  }
+
+  return paymentRows.value[0]?.method === PAYMENT_METHODS.CASH;
+});
+
+const hasAppliedChangeDiscount = computed(() => saleStore.discountCents > 0);
+const appliedChangeDiscountMessage = computed(() => {
+  if (!hasAppliedChangeDiscount.value) {
+    return "";
+  }
+
+  return `Desconto de ${formatCents(saleStore.discountCents)} aplicado.`;
+});
+
 const pixPaymentCents = computed(() => {
   const pixRow = paymentRows.value.find((row) => row.method === PAYMENT_METHODS.PIX);
   return pixRow ? parseCurrencyInputToCents(pixRow.amountInput) : 0;
@@ -356,6 +416,45 @@ watch(
     }
 
     restoreProductInputFocus();
+  },
+);
+
+watch(
+  () => showWeightModal.value,
+  async (isOpen) => {
+    if (!isOpen) {
+      return;
+    }
+
+    rawWeight.value = 0;
+    await focusWeightedInput();
+  },
+);
+
+watch(
+  () => showChangeDiscountInput.value,
+  async (isVisible) => {
+    if (!isVisible) {
+      return;
+    }
+
+    await nextTick();
+    changeDiscountInputRef.value?.focus();
+  },
+);
+
+watch(
+  () => isCashOnlyPayment.value,
+  (isCashOnly) => {
+    if (isCashOnly) {
+      return;
+    }
+
+    cancelChangeDiscountInput();
+
+    if (hasAppliedChangeDiscount.value) {
+      saleStore.removeChangeDiscount();
+    }
   },
 );
 
@@ -469,6 +568,18 @@ function formatPhoneForInput(rawValue: string): string {
   return `(${areaCode}) ${firstDigit} ${mid}-${end}`;
 }
 
+function formatStockQuantity(quantity: number, isBulk: boolean): string {
+  if (isBulk) {
+    const formatted = new Intl.NumberFormat("pt-BR", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 3,
+    }).format(quantity);
+    return `${formatted} kg`;
+  }
+
+  return `${Math.trunc(quantity)} un`;
+}
+
 function handleCustomerPhoneInput(event: Event): void {
   const target = event.target as HTMLInputElement;
   customerSearchInput.value = formatPhoneForInput(target.value);
@@ -478,6 +589,11 @@ function restoreProductInputFocus(): void {
   setTimeout(() => {
     productInputRef.value?.focus();
   }, 0);
+}
+
+async function focusWeightedInput(): Promise<void> {
+  await nextTick();
+  weightedInputRef.value?.focus();
 }
 
 function parseCurrencyInputToCents(input: string): number {
@@ -503,9 +619,50 @@ function handlePaymentRowCurrencyInput(event: Event, row: PaymentEntry): void {
   row.amountInput = toCurrencyMaskedValue(target.value);
 }
 
-function handleDiscountCurrencyInput(event: Event): void {
+function handleChangeDiscountCurrencyInput(event: Event): void {
   const target = event.target as HTMLInputElement;
-  discountInput.value = toCurrencyMaskedValue(target.value);
+  changeDiscountInput.value = toCurrencyMaskedValue(target.value);
+}
+
+function openChangeDiscountInput(): void {
+  showChangeDiscountInput.value = true;
+  changeDiscountInput.value = "";
+  changeDiscountError.value = null;
+}
+
+function cancelChangeDiscountInput(): void {
+  showChangeDiscountInput.value = false;
+  changeDiscountInput.value = "";
+  changeDiscountError.value = null;
+}
+
+function confirmChangeDiscount(): void {
+  changeDiscountError.value = null;
+  const cents = parseCurrencyInputToCents(changeDiscountInput.value);
+
+  if (cents <= 0) {
+    cancelChangeDiscountInput();
+    return;
+  }
+
+  if (cents > 99) {
+    changeDiscountError.value = "Desconto de troco não pode exceder R$ 0,99.";
+    return;
+  }
+
+  if (hasAppliedChangeDiscount.value) {
+    changeDiscountError.value = "Desconto de troco já aplicado nesta venda.";
+    return;
+  }
+
+  saleStore.applyChangeDiscount(cents);
+  showChangeDiscountInput.value = false;
+  changeDiscountInput.value = "";
+}
+
+function removeChangeDiscount(): void {
+  saleStore.removeChangeDiscount();
+  changeDiscountError.value = null;
 }
 
 function handleOpeningBalanceCurrencyInput(event: Event): void {
@@ -705,9 +862,9 @@ async function handleProductEntry(): Promise<void> {
       return;
     }
 
-    if (product.weight_unit === "kg" || product.weight_unit === "g") {
+    if (product.is_bulk || product.weight_unit === "kg" || product.weight_unit === "g") {
       weightedProduct.value = product;
-      weightedQuantityInput.value = "1,000";
+      rawWeight.value = 0;
       weightedModalError.value = null;
       showWeightModal.value = true;
       return;
@@ -769,7 +926,7 @@ function addProductToCart(product: Product, quantity: number): void {
   const requestedTotal = currentQuantityInCart + quantity;
 
   if (requestedTotal > product.stock_quantity) {
-    productMessage.value = `Estoque insuficiente. Disponível: ${product.stock_quantity} unidades.`;
+    productMessage.value = `Estoque insuficiente. Disponível: ${formatStockQuantity(product.stock_quantity, product.is_bulk)}.`;
     return;
   }
 
@@ -825,12 +982,6 @@ async function validateManagerPinAndProceed(): Promise<void> {
       resetSaleState();
     }
 
-    if (pending.action === "high-discount") {
-      saleStore.discountCents = pending.discountCents || 0;
-      discountInput.value = saleStore.discountCents > 0 ? formatCents(saleStore.discountCents) : "";
-      discountError.value = null;
-    }
-
     showManagerPinModal.value = false;
     pendingManagerPinAction.value = null;
   } catch {
@@ -855,9 +1006,13 @@ function incrementItemQuantity(productId: string): void {
     return;
   }
 
+  if (item.is_bulk) {
+    return;
+  }
+
   // Validar estoque disponível
   if (item.quantity + 1 > item.stock_quantity) {
-    productMessage.value = `Estoque insuficiente. Disponível: ${item.stock_quantity} unidades.`;
+    productMessage.value = `Estoque insuficiente. Disponível: ${formatStockQuantity(item.stock_quantity, item.is_bulk ?? false)}.`;
     return;
   }
 
@@ -868,6 +1023,10 @@ function decrementItemQuantity(productId: string): void {
   const item = saleStore.items.find((i) => i.product_id === productId);
   
   if (!item) {
+    return;
+  }
+
+  if (item.is_bulk) {
     return;
   }
 
@@ -885,31 +1044,6 @@ function cancelSaleWithApproval(): void {
   }
 
   requestManagerPin({ action: "cancel-sale" });
-}
-
-function applyDiscount(): void {
-  discountError.value = null;
-
-  const parsedDiscount = parseCurrencyInputToCents(discountInput.value);
-
-  if (parsedDiscount < 0) {
-    discountError.value = "Desconto inválido.";
-    return;
-  }
-
-  if (parsedDiscount > subtotalCents.value) {
-    discountError.value = "Desconto não pode ser maior que o subtotal.";
-    return;
-  }
-
-  const maxWithoutApproval = Math.floor((subtotalCents.value * discountLimitPercentage.value) / 100);
-
-  if (parsedDiscount > maxWithoutApproval) {
-    requestManagerPin({ action: "high-discount", discountCents: parsedDiscount });
-    return;
-  }
-
-  saleStore.discountCents = parsedDiscount;
 }
 
 function openProductSearchModal(): void {
@@ -946,6 +1080,15 @@ async function loadProductsForSearch(): Promise<void> {
 }
 
 function selectProductFromSearch(product: Product): void {
+  if (product.is_bulk || product.weight_unit === "kg" || product.weight_unit === "g") {
+    weightedProduct.value = product;
+    rawWeight.value = 0;
+    weightedModalError.value = null;
+    showWeightModal.value = true;
+    showProductSearchModal.value = false;
+    return;
+  }
+
   addProductToCart(product, 1);
   showProductSearchModal.value = false;
 }
@@ -983,15 +1126,28 @@ function closeTopModal(): void {
   }
 }
 
-function parseWeightInputToKg(input: string): number {
-  const normalized = input.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
-  const parsed = Number.parseFloat(normalized);
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 0;
+function handleWeightedInputKeydown(event: KeyboardEvent): void {
+  if (event.key >= "0" && event.key <= "9") {
+    rawWeight.value = rawWeight.value * 10 + Number(event.key);
+    event.preventDefault();
+    return;
   }
 
-  return parsed;
+  if (event.key === "Backspace") {
+    rawWeight.value = Math.floor(rawWeight.value / 10);
+    event.preventDefault();
+    return;
+  }
+
+  if (event.key === "Tab" || event.key === "Escape" || event.key === "Enter") {
+    return;
+  }
+
+  if (event.ctrlKey || event.metaKey) {
+    return;
+  }
+
+  event.preventDefault();
 }
 
 function confirmWeightedItem(): void {
@@ -1002,10 +1158,15 @@ function confirmWeightedItem(): void {
     return;
   }
 
-  const weightInKg = parseWeightInputToKg(weightedQuantityInput.value);
+  const weightInKg = weightKg.value;
 
   if (weightInKg <= 0) {
     weightedModalError.value = "Informe um peso válido.";
+    return;
+  }
+
+  if (isWeightedOverStock.value) {
+    weightedModalError.value = weightedOverStockMessage.value;
     return;
   }
 
@@ -1016,16 +1177,31 @@ function confirmWeightedItem(): void {
     return;
   }
 
-  saleStore.addItem({
-    product_id: weightedProduct.value.id,
-    product_name: `${weightedProduct.value.name} (${weightInKg.toFixed(3).replace(".", ",")} kg)`,
-    product_barcode: weightedProduct.value.barcode,
-    product_description: weightedProduct.value.description,
-    quantity: 1,
-    unit_price_cents: weightedTotal,
-    discount_cents: 0,
-    stock_quantity: weightedProduct.value.stock_quantity,
-  });
+  if (weightedProduct.value.is_bulk) {
+    saleStore.addItem({
+      product_id: weightedProduct.value.id,
+      product_name: weightedProduct.value.name,
+      product_barcode: weightedProduct.value.barcode,
+      product_description: weightedProduct.value.description,
+      quantity: weightInKg,
+      unit_price_cents: weightedProduct.value.price_cents,
+      total_cents: weightedTotal,
+      is_bulk: true,
+      discount_cents: 0,
+      stock_quantity: weightedProduct.value.stock_quantity,
+    });
+  } else {
+    saleStore.addItem({
+      product_id: weightedProduct.value.id,
+      product_name: `${weightedProduct.value.name} (${weightInKg.toFixed(3).replace(".", ",")} kg)`,
+      product_barcode: weightedProduct.value.barcode,
+      product_description: weightedProduct.value.description,
+      quantity: 1,
+      unit_price_cents: weightedTotal,
+      discount_cents: 0,
+      stock_quantity: weightedProduct.value.stock_quantity,
+    });
+  }
 
   showWeightModal.value = false;
   productEntryInput.value = "";
@@ -1039,6 +1215,7 @@ function openPaymentModal(): void {
 
   paymentRows.value = [{ method: PAYMENT_METHODS.CASH, amountInput: formatCents(totalCents.value) }];
   cashReceivedInput.value = "";
+  cancelChangeDiscountInput();
   paymentError.value = null;
   pixQRCodeError.value = null;
   paymentSuccess.value = false;
@@ -1187,6 +1364,7 @@ function closePaymentModalAfterSuccess(): void {
   showPaymentModal.value = false;
   paymentSuccess.value = false;
   paymentError.value = null;
+  cancelChangeDiscountInput();
 }
 
 async function generatePixQRCode(): Promise<void> {
@@ -1469,8 +1647,7 @@ async function submitCashMovement(type: "cash-out" | "cash-in"): Promise<void> {
 
 function resetSaleState(): void {
   saleStore.clearCart();
-  saleStore.discountCents = 0;
-  discountInput.value = "";
+  cancelChangeDiscountInput();
   selectedCustomer.value = null;
   customerSearchInput.value = "";
   selectedItemProductId.value = null;
@@ -1773,7 +1950,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                         </div>
                       </td>
                       <td class="px-2 py-2">
-                        <div class="flex items-center gap-1">
+                        <div v-if="!item.is_bulk" class="flex items-center gap-1">
                           <button
                             type="button"
                             aria-label="Diminuir quantidade"
@@ -1792,10 +1969,15 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                             +
                           </button>
                         </div>
+                        <span v-else class="text-xs font-medium text-slate-700">
+                          {{ item.quantity.toFixed(3).replace('.', ',') }} kg
+                        </span>
                       </td>
-                      <td class="px-2 py-2">un</td>
+                      <td class="px-2 py-2">{{ item.is_bulk ? "kg" : "un" }}</td>
                       <td class="px-2 py-2">{{ formatCents(item.unit_price_cents) }}</td>
-                      <td class="px-2 py-2">{{ formatCents(item.unit_price_cents * item.quantity - item.discount_cents) }}</td>
+                      <td class="px-2 py-2">
+                        {{ formatCents((item.is_bulk ? (item.total_cents || 0) : (item.unit_price_cents * item.quantity)) - item.discount_cents) }}
+                      </td>
                       <td class="px-2 py-2">
                         <button
                           type="button"
@@ -1824,38 +2006,11 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                 <span class="text-slate-600">Subtotal</span>
                 <strong class="text-slate-900">{{ formatCents(subtotalCents) }}</strong>
               </div>
-              <div v-if="saleStore.discountCents > 0" class="flex items-center justify-between">
-                <span class="text-slate-600">Desconto</span>
-                <strong class="text-amber-700">- {{ formatCents(saleStore.discountCents) }}</strong>
-              </div>
             </div>
 
             <div class="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
               <p class="text-sm text-blue-700">Total a pagar</p>
               <p class="text-[34px] leading-none font-bold text-blue-900">{{ formatCents(totalCents) }}</p>
-            </div>
-
-            <div class="mt-4 rounded-lg border border-slate-200 p-3">
-              <p class="mb-2 text-sm font-medium text-slate-700">Desconto geral</p>
-              <input
-                :value="discountInput"
-                type="text"
-                inputmode="numeric"
-                placeholder="R$ 0,00"
-                class="h-10 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-blue-500"
-                @input="handleDiscountCurrencyInput"
-              />
-              <p class="mt-1 text-xs text-slate-500">
-                Acima de {{ discountLimitPercentage }}% exige PIN de gerente.
-              </p>
-              <p v-if="discountError" class="mt-1 text-xs text-red-700">{{ discountError }}</p>
-              <button
-                type="button"
-                class="mt-2 h-10 w-full rounded-md border border-blue-300 text-sm font-semibold text-blue-700 hover:bg-blue-50"
-                @click="applyDiscount"
-              >
-                Aplicar desconto
-              </button>
             </div>
 
             <div class="mt-4 grid grid-cols-1 gap-2">
@@ -2000,7 +2155,9 @@ function captureScannerInput(event: KeyboardEvent): boolean {
       @click.self="showWeightModal = false"
     >
       <div class="w-full max-w-lg rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">Pesagem de Produto</h2>
+        <h2 class="text-lg font-bold text-slate-900">
+          {{ weightedProduct?.is_bulk ? "Produto a Granel" : "Pesagem de Produto" }}
+        </h2>
 
         <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
           <p class="text-sm text-slate-700">Produto: <strong>{{ weightedProduct?.name }}</strong></p>
@@ -2010,17 +2167,27 @@ function captureScannerInput(event: KeyboardEvent): boolean {
         <div class="mt-4">
           <label class="mb-1 block text-sm font-medium text-slate-700">Peso (kg)</label>
           <input
-            v-model="weightedQuantityInput"
+            ref="weightedInputRef"
+            :value="weightedInputDisplay"
             type="text"
-            inputmode="decimal"
-            placeholder="1,500"
-            class="h-11 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-blue-500"
+            inputmode="numeric"
+            readonly
+            class="h-11 w-full rounded-md border border-slate-300 bg-white px-3 outline-none focus:border-blue-500"
+            @keydown="handleWeightedInputKeydown"
           />
         </div>
+
+        <p class="mt-2 text-sm text-slate-600">
+          Estoque disponível: <strong>{{ weightedStockAvailableDisplay }}</strong>
+        </p>
 
         <p class="mt-3 text-sm text-slate-700">
           Valor calculado: <strong>{{ formatCents(weightedTotalCents) }}</strong>
         </p>
+
+        <p class="mt-1 text-xs text-slate-600">Peso informado: {{ weightedQuantityDisplay }}</p>
+
+        <p v-if="weightedOverStockMessage" class="mt-2 text-sm text-red-700">{{ weightedOverStockMessage }}</p>
 
         <p v-if="weightedModalError" class="mt-2 text-sm text-red-700">{{ weightedModalError }}</p>
 
@@ -2035,9 +2202,11 @@ function captureScannerInput(event: KeyboardEvent): boolean {
           <button
             type="button"
             class="h-10 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800"
+            :disabled="isWeightedOverStock"
+            :class="isWeightedOverStock ? 'cursor-not-allowed opacity-60' : ''"
             @click="confirmWeightedItem"
           >
-            Adicionar ao carrinho
+            Adicionar ao Carrinho
           </button>
         </div>
       </div>
@@ -2168,6 +2337,54 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               @input="handleCashReceivedCurrencyInput"
             />
             <p class="mt-2 text-sm text-slate-700">Troco: <strong>{{ formatCents(cashChangeCents) }}</strong></p>
+
+            <div v-if="isCashOnlyPayment" class="mt-3">
+              <button
+                v-if="!showChangeDiscountInput && !hasAppliedChangeDiscount"
+                type="button"
+                class="h-9 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                @click="openChangeDiscountInput"
+              >
+                Desconto de Troco
+              </button>
+
+              <div v-else-if="showChangeDiscountInput" class="flex items-center gap-2">
+                <input
+                  ref="changeDiscountInputRef"
+                  :value="changeDiscountInput"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="R$ 0,00"
+                  class="h-10 flex-1 rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-blue-500"
+                  @input="handleChangeDiscountCurrencyInput"
+                  @keydown.enter.prevent="confirmChangeDiscount"
+                />
+                <button
+                  type="button"
+                  class="h-10 rounded-md bg-blue-700 px-3 text-sm font-semibold text-white hover:bg-blue-800"
+                  @click="confirmChangeDiscount"
+                >
+                  Confirmar
+                </button>
+              </div>
+
+              <div
+                v-else-if="hasAppliedChangeDiscount"
+                class="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"
+              >
+                <span>{{ appliedChangeDiscountMessage }}</span>
+                <button
+                  type="button"
+                  aria-label="Remover desconto de troco"
+                  class="rounded p-0.5 text-emerald-700 hover:bg-emerald-100"
+                  @click="removeChangeDiscount"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <p v-if="changeDiscountError" class="mt-1 text-xs text-red-700">{{ changeDiscountError }}</p>
+            </div>
           </div>
 
           <div v-if="hasFiadoSelectedInPayment && selectedCustomer" class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-3">

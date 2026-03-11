@@ -9,26 +9,39 @@ type CartItem = {
   product_description?: string | null;
   quantity: number;
   unit_price_cents: number;
+  total_cents?: number;
+  is_bulk?: boolean;
   discount_cents: number;
   stock_quantity: number;
 };
 
 export const useSaleStore = defineStore("sale", () => {
   const items = ref<CartItem[]>([]);
-  const discountCents = ref(0);
+  const discountCentsState = ref(0);
   const saleUuid = ref<string | null>(null);
 
   const subtotalCents = computed(() =>
     items.value.reduce(
-      (sum, item) =>
-        sum + item.unit_price_cents * item.quantity - item.discount_cents,
+      (sum, item) => {
+        const lineTotal = item.is_bulk
+          ? item.total_cents ?? Math.round(item.unit_price_cents * item.quantity)
+          : item.unit_price_cents * item.quantity;
+
+        return sum + lineTotal - item.discount_cents;
+      },
       0,
     ),
   );
 
-  const totalCents = computed(() => subtotalCents.value - discountCents.value);
+  const discountCents = computed(() => discountCentsState.value);
+  const totalCents = computed(() => subtotalCents.value - discountCentsState.value);
 
   function addItem(item: CartItem): void {
+    if (item.is_bulk) {
+      items.value.push(item);
+      return;
+    }
+
     const existing = items.value.find(
       (i) =>
         i.product_id === item.product_id &&
@@ -65,8 +78,20 @@ export const useSaleStore = defineStore("sale", () => {
 
   function clearCart(): void {
     items.value = [];
-    discountCents.value = 0;
+    discountCentsState.value = 0;
     saleUuid.value = null;
+  }
+
+  function applyChangeDiscount(cents: number): void {
+    if (!Number.isInteger(cents) || cents <= 0 || cents > 99) {
+      throw new Error("Desconto de troco inválido.");
+    }
+
+    discountCentsState.value = cents;
+  }
+
+  function removeChangeDiscount(): void {
+    discountCentsState.value = 0;
   }
 
   function buildPayload(
@@ -81,7 +106,7 @@ export const useSaleStore = defineStore("sale", () => {
       terminal_id: terminalId,
       operator_id: operatorId,
       payment_method: paymentMethod as CreateSalePayload["payment_method"],
-      discount_cents: discountCents.value,
+      discount_cents: discountCentsState.value,
       payments,
       customer_id: customerId,
       items: items.value.map((item) => ({
@@ -89,6 +114,7 @@ export const useSaleStore = defineStore("sale", () => {
         quantity: item.quantity,
         unit_price_cents: item.unit_price_cents,
         discount_cents: item.discount_cents,
+        is_bulk: item.is_bulk,
       })),
     };
   }
@@ -103,6 +129,8 @@ export const useSaleStore = defineStore("sale", () => {
     removeItem,
     updateItemQuantity,
     clearCart,
+    applyChangeDiscount,
+    removeChangeDiscount,
     buildPayload,
   };
 });

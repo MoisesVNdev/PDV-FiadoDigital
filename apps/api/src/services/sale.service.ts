@@ -32,7 +32,7 @@ export class SaleService {
 
     const subtotalCents = payload.items.reduce(
       (sum, item) =>
-        sum + item.unit_price_cents * item.quantity - item.discount_cents,
+        sum + Math.round(item.unit_price_cents * item.quantity) - item.discount_cents,
       0,
     );
     const totalCents = subtotalCents - payload.discount_cents;

@@ -4,8 +4,8 @@ import type { CreateBrandPayload, UpdateBrandPayload } from "@pdv/shared";
 const brandRepository = new BrandRepository();
 
 export class BrandService {
-  async list() {
-    return brandRepository.findAll();
+  async list(productTypeId?: string) {
+    return brandRepository.findAll(productTypeId);
   }
 
   async create(payload: CreateBrandPayload) {

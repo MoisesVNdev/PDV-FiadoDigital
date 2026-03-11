@@ -4,9 +4,14 @@ import { PAYMENT_METHODS } from "@pdv/shared";
 
 const saleItemSchema = z.object({
   product_id: z.string().uuid(),
-  quantity: z.number().int().positive(),
+  quantity: z.number().positive(),
   unit_price_cents: z.number().int().positive(),
-  discount_cents: z.number().int().nonnegative(),
+  discount_cents: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(99, "Desconto de troco não pode exceder R$ 0,99."),
+  is_bulk: z.boolean().optional(),
 });
 
 const salePaymentSchema = z.object({

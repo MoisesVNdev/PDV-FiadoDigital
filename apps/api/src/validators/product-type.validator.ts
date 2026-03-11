@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from "express";
 
 const productTypeBaseSchema = z.object({
   name: z.string().min(1).max(50),
+  profit_margin: z.number().min(0).max(99).optional().nullable(),
 });
 
 const createProductTypeSchema = productTypeBaseSchema;

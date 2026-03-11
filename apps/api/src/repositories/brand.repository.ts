@@ -2,9 +2,21 @@ import { prisma } from "../config/database.js";
 import type { CreateBrandPayload, UpdateBrandPayload } from "@pdv/shared";
 
 export class BrandRepository {
-  async findAll() {
+  async findAll(productTypeId?: string) {
     return prisma.brand.findMany({
-      where: { deleted_at: null },
+      where: {
+        deleted_at: null,
+        ...(productTypeId
+          ? {
+              products: {
+                some: {
+                  deleted_at: null,
+                  product_type_id: productTypeId,
+                },
+              },
+            }
+          : {}),
+      },
       orderBy: { name: "asc" },
     });
   }

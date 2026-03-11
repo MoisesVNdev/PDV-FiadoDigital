@@ -51,5 +51,6 @@ export type CreateSalePayload = {
     quantity: number;
     unit_price_cents: number;
     discount_cents: number;
+    is_bulk?: boolean;
   }[];
 };
