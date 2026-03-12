@@ -9,6 +9,7 @@ import { productTypeRouter } from "./product-type.routes.js";
 import { brandRouter } from "./brand.routes.js";
 import { pixRouter } from "./pix.routes.js";
 import { settingsRouter } from "./settings.routes.js";
+import { cardMachineRouter } from "./card-machine.routes.js";
 
 export const router = Router();
 
@@ -22,3 +23,4 @@ router.use("/product-types", productTypeRouter);
 router.use("/brands", brandRouter);
 router.use("/pix", pixRouter);
 router.use("/settings", settingsRouter);
+router.use("/card-machines", cardMachineRouter);

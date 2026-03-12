@@ -23,6 +23,8 @@ const salePaymentSchema = z.object({
     PAYMENT_METHODS.FIADO,
   ]),
   amount_cents: z.number().int().positive(),
+  installments: z.number().int().min(1).max(12).optional(),
+  applied_rate: z.number().min(0).max(100).optional(),
 });
 
 const createSaleSchema = z.object({
@@ -38,6 +40,7 @@ const createSaleSchema = z.object({
     PAYMENT_METHODS.MIXED,
   ]),
   discount_cents: z.number().int().nonnegative(),
+  total_cents: z.number().int().positive().optional(),
   payments: z.array(salePaymentSchema).min(1),
   items: z.array(saleItemSchema).min(1),
 });

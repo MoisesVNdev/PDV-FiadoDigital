@@ -156,11 +156,13 @@ model Sale {
 }
 
 model SalePayment {
-  id          String   @id @default(uuid())
-  sale_id     String
-  method      String   // cash | pix | credit_card | debit_card | fiado
+  id           String   @id @default(uuid())
+  sale_id      String
+  method       String   // cash | pix | credit_card | debit_card | fiado
   amount_cents Int
-  created_at  DateTime @default(now())
+  installments Int?     // número de parcelas (crédito parcelado)
+  applied_rate Float?   // taxa percentual aplicada pela operadora
+  created_at   DateTime @default(now())
 
   sale Sale @relation(fields: [sale_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
@@ -263,6 +265,33 @@ model AuditLog {
   @@index([entity_type, entity_id])
   @@index([created_at])
   @@map("audit_log")
+}
+
+model CardMachine {
+  id         String            @id @default(uuid())
+  name       String
+  is_active  Boolean           @default(true)
+  absorb_fee Boolean           @default(true)
+  rates      CardMachineRate[]
+  created_at DateTime          @default(now())
+  updated_at DateTime          @updatedAt
+  deleted_at DateTime?
+
+  @@map("card_machines")
+}
+
+model CardMachineRate {
+  id                       String      @id @default(uuid())
+  card_machine_id          String
+  card_machine             CardMachine @relation(fields: [card_machine_id], references: [id], onDelete: Cascade)
+  debit_rate               Float       @default(0)
+  credit_base_rate         Float       @default(0) // taxa base do crédito à vista
+  credit_incremental_rate  Float       @default(0) // taxa incremental por parcela extra
+  max_installments         Int         @default(1)
+  created_at               DateTime    @default(now())
+  updated_at               DateTime    @updatedAt
+
+  @@map("card_machine_rates")
 }
 
 // ------------------------------------------

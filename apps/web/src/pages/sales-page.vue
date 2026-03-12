@@ -3,6 +3,7 @@ import {
   formatCents,
   parseCentsFromString,
   PAYMENT_METHODS,
+  type CardMachine,
   type CashRegister,
   type Customer,
   type PaymentMethod,
@@ -27,6 +28,8 @@ type PendingManagerPin = {
 type PaymentEntry = {
   method: PaymentMethod;
   amountInput: string;
+  card_machine_id?: string;
+  installments?: number;
 };
 
 const { authenticatedFetch } = useApi();
@@ -94,6 +97,8 @@ const productSearchError = ref<string | null>(null);
 const showPaymentModal = ref(false);
 const paymentRows = ref<PaymentEntry[]>([{ method: PAYMENT_METHODS.CASH, amountInput: "" }]);
 const cashReceivedInput = ref("");
+const cardMachines = ref<CardMachine[]>([]);
+const loadingCardMachines = ref(false);
 const paymentLoading = ref(false);
 const paymentError = ref<string | null>(null);
 const paymentSuccess = ref(false);
@@ -157,11 +162,47 @@ const paymentMethods = [
 
 const paymentRowsTotalCents = computed(() => {
   return paymentRows.value.reduce((sum, row) => {
-    return sum + parseCurrencyInputToCents(row.amountInput);
+    return sum + getAmountWithFeeCentsForRow(row);
   }, 0);
 });
 
-const remainingCents = computed(() => totalCents.value - paymentRowsTotalCents.value);
+const remainingCents = computed(() => totalWithFeesCents.value - paymentRowsTotalCents.value);
+
+const cardPaymentRows = computed(() => {
+  return paymentRows.value.filter((row) => {
+    return row.method === PAYMENT_METHODS.CREDIT_CARD || row.method === PAYMENT_METHODS.DEBIT_CARD;
+  });
+});
+
+const totalFeeCents = computed(() => {
+  return cardPaymentRows.value.reduce((sum, row) => {
+    return sum + getFeeCentsForRow(row);
+  }, 0);
+});
+
+const totalWithFeesCents = computed(() => {
+  return totalCents.value + totalFeeCents.value;
+});
+
+const feeRateLabel = computed(() => {
+  const cardRow = cardPaymentRows.value.find((row) => getFeeCentsForRow(row) > 0);
+
+  if (!cardRow) {
+    return "0,00";
+  }
+
+  const machine = getSelectedCardMachine(cardRow.card_machine_id);
+
+  if (!machine) {
+    return "0,00";
+  }
+
+  const rate = getRateByMethod(machine, cardRow.method, cardRow.installments ?? 1);
+  return rate.toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+});
 
 const cashAmountRequiredCents = computed(() => {
   return paymentRows.value
@@ -617,6 +658,131 @@ function toCurrencyMaskedValue(rawInput: string): string {
 function handlePaymentRowCurrencyInput(event: Event, row: PaymentEntry): void {
   const target = event.target as HTMLInputElement;
   row.amountInput = toCurrencyMaskedValue(target.value);
+}
+
+function isCardMethod(method: PaymentMethod): boolean {
+  return method === PAYMENT_METHODS.CREDIT_CARD || method === PAYMENT_METHODS.DEBIT_CARD;
+}
+
+function getSelectedCardMachine(cardMachineId?: string): CardMachine | null {
+  if (!cardMachineId) {
+    return null;
+  }
+
+  return cardMachines.value.find((machine) => machine.id === cardMachineId) ?? null;
+}
+
+function getRateByMethod(machine: CardMachine, method: PaymentMethod, installments = 1): number {
+  const rate = machine.rates[0];
+
+  if (!rate) {
+    return 0;
+  }
+
+  if (method === PAYMENT_METHODS.CREDIT_CARD) {
+    return rate.credit_base_rate + (installments - 1) * rate.credit_incremental_rate;
+  }
+
+  if (method === PAYMENT_METHODS.DEBIT_CARD) {
+    return rate.debit_rate;
+  }
+
+  return 0;
+}
+
+function getInstallmentOptions(row: PaymentEntry): { value: number; label: string }[] {
+  const machine = getSelectedCardMachine(row.card_machine_id);
+  const maxInstallments = machine?.rates[0]?.max_installments ?? 1;
+
+  return Array.from({ length: maxInstallments }, (_, i) => {
+    const n = i + 1;
+    const rate = machine ? getRateByMethod(machine, PAYMENT_METHODS.CREDIT_CARD, n) : 0;
+    const rateLabel = rate.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return {
+      value: n,
+      label: n === 1 ? `1x à vista (${rateLabel}%)` : `${n}x (${rateLabel}%)`,
+    };
+  });
+}
+
+function getFeeCentsForRow(row: PaymentEntry): number {
+  if (!isCardMethod(row.method)) {
+    return 0;
+  }
+
+  const machine = getSelectedCardMachine(row.card_machine_id);
+
+  if (!machine || machine.absorb_fee) {
+    return 0;
+  }
+
+  const amountCents = parseCurrencyInputToCents(row.amountInput);
+
+  if (amountCents <= 0) {
+    return 0;
+  }
+
+  const rate = getRateByMethod(machine, row.method, row.installments ?? 1);
+  return Math.round((amountCents * rate) / 100);
+}
+
+function getAmountWithFeeCentsForRow(row: PaymentEntry): number {
+  return parseCurrencyInputToCents(row.amountInput) + getFeeCentsForRow(row);
+}
+
+function handlePaymentMethodChange(row: PaymentEntry): void {
+  if (!isCardMethod(row.method)) {
+    row.card_machine_id = undefined;
+    row.installments = undefined;
+    return;
+  }
+
+  const firstActive = cardMachines.value.find((machine) => machine.is_active);
+  row.card_machine_id = firstActive?.id;
+
+  if (row.method === PAYMENT_METHODS.CREDIT_CARD) {
+    row.installments = 1;
+  } else {
+    row.installments = undefined;
+  }
+}
+
+async function loadActiveCardMachines(): Promise<void> {
+  loadingCardMachines.value = true;
+
+  try {
+    const response = await authenticatedFetch("/api/card-machines?only_active=true");
+    const data = await response.json();
+
+    if (!response.ok) {
+      paymentError.value = data.message || "Não foi possível carregar as maquininhas ativas.";
+      return;
+    }
+
+    cardMachines.value = (data.data as CardMachine[]) ?? [];
+
+    for (const row of paymentRows.value) {
+      if (!isCardMethod(row.method)) {
+        continue;
+      }
+
+      const exists = cardMachines.value.some((machine) => machine.id === row.card_machine_id);
+
+      if (!exists) {
+        const firstActive = cardMachines.value.find((machine) => machine.is_active);
+        row.card_machine_id = firstActive?.id;
+      }
+
+      if (row.method === PAYMENT_METHODS.CREDIT_CARD && row.installments === undefined) {
+        row.installments = 1;
+      }
+    }
+  } catch (error) {
+    console.error("Erro ao carregar maquininhas ativas:", error);
+    paymentError.value = "Erro de conexão ao carregar maquininhas ativas.";
+  } finally {
+    loadingCardMachines.value = false;
+  }
 }
 
 function handleChangeDiscountCurrencyInput(event: Event): void {
@@ -1219,6 +1385,7 @@ function openPaymentModal(): void {
   paymentError.value = null;
   pixQRCodeError.value = null;
   paymentSuccess.value = false;
+  void loadActiveCardMachines();
   showPaymentModal.value = true;
 }
 
@@ -1233,7 +1400,9 @@ function addPaymentRow(): void {
     return;
   }
 
-  paymentRows.value.push({ method: firstAvailable.value, amountInput: "" });
+  const row: PaymentEntry = { method: firstAvailable.value, amountInput: "", card_machine_id: undefined };
+  handlePaymentMethodChange(row);
+  paymentRows.value.push(row);
 }
 
 function removePaymentRow(index: number): void {
@@ -1264,9 +1433,20 @@ async function confirmPayment(): Promise<void> {
 
     const informedTotal = paymentRowsTotalCents.value;
 
-    if (informedTotal < totalCents.value) {
+    if (informedTotal < totalWithFeesCents.value) {
       paymentError.value = "A soma dos pagamentos é insuficiente para o total da venda.";
       return;
+    }
+
+    for (const row of paymentRows.value) {
+      if (!isCardMethod(row.method)) {
+        continue;
+      }
+
+      if (!row.card_machine_id) {
+        paymentError.value = "Selecione a maquininha para pagamentos no cartão.";
+        return;
+      }
     }
 
     const hasFiado = paymentRows.value.some((row) => row.method === PAYMENT_METHODS.FIADO);
@@ -1290,6 +1470,7 @@ async function confirmPayment(): Promise<void> {
 
     const uniqueMethods = Array.from(new Set(paymentRows.value.map((row) => row.method)));
     const paymentMethod = (uniqueMethods.length > 1 ? PAYMENT_METHODS.MIXED : uniqueMethods[0]) as string;
+    const finalTotalCents = totalWithFeesCents.value;
 
     const operatorId = authStore.user?.id;
 
@@ -1304,14 +1485,27 @@ async function confirmPayment(): Promise<void> {
       return;
     }
 
-    const payments = paymentRows.value.map((row) => ({
-      method: row.method,
-      amount_cents: parseCurrencyInputToCents(row.amountInput),
-    }));
+    const payments = paymentRows.value.map((row) => {
+      const amountWithFee = getAmountWithFeeCentsForRow(row);
+      const machine = getSelectedCardMachine(row.card_machine_id);
+      const entry: { method: PaymentMethod; amount_cents: number; installments?: number; applied_rate?: number } = {
+        method: row.method,
+        amount_cents: amountWithFee,
+      };
+
+      if (row.method === PAYMENT_METHODS.CREDIT_CARD && row.installments) {
+        entry.installments = row.installments;
+        if (machine) {
+          entry.applied_rate = getRateByMethod(machine, row.method, row.installments);
+        }
+      }
+
+      return entry;
+    });
 
     // Normalizar: se a soma excede o total (troco em dinheiro), ajustar o valor do cash
     const paymentSum = payments.reduce((s, p) => s + p.amount_cents, 0);
-    const excess = paymentSum - totalCents.value;
+    const excess = paymentSum - finalTotalCents;
 
     if (excess > 0) {
       const cashPayment = payments.find((p) => p.method === PAYMENT_METHODS.CASH);
@@ -1327,6 +1521,7 @@ async function confirmPayment(): Promise<void> {
       operatorId,
       payments,
       selectedCustomer.value?.id,
+      finalTotalCents,
     );
 
     const response = await authenticatedFetch("/api/sales", {
@@ -1481,6 +1676,7 @@ async function confirmPixReceived(): Promise<void> {
     // Agora finalizar a venda normalmente
     const uniqueMethods = Array.from(new Set(paymentRows.value.map((row) => row.method)));
     const paymentMethod = (uniqueMethods.length > 1 ? PAYMENT_METHODS.MIXED : uniqueMethods[0]) as string;
+    const finalTotalCents = totalWithFeesCents.value;
 
     const operatorId = authStore.user?.id;
 
@@ -1489,14 +1685,27 @@ async function confirmPixReceived(): Promise<void> {
       return;
     }
 
-    const payments = paymentRows.value.map((row) => ({
-      method: row.method,
-      amount_cents: parseCurrencyInputToCents(row.amountInput),
-    }));
+    const payments = paymentRows.value.map((row) => {
+      const amountWithFee = getAmountWithFeeCentsForRow(row);
+      const machine = getSelectedCardMachine(row.card_machine_id);
+      const entry: { method: PaymentMethod; amount_cents: number; installments?: number; applied_rate?: number } = {
+        method: row.method,
+        amount_cents: amountWithFee,
+      };
+
+      if (row.method === PAYMENT_METHODS.CREDIT_CARD && row.installments) {
+        entry.installments = row.installments;
+        if (machine) {
+          entry.applied_rate = getRateByMethod(machine, row.method, row.installments);
+        }
+      }
+
+      return entry;
+    });
 
     // Normalizar: se a soma excede o total (troco em dinheiro), ajustar o valor do cash
     const paymentSum = payments.reduce((s, p) => s + p.amount_cents, 0);
-    const excess = paymentSum - totalCents.value;
+    const excess = paymentSum - finalTotalCents;
 
     if (excess > 0) {
       const cashPayment = payments.find((p) => p.method === PAYMENT_METHODS.CASH);
@@ -1512,6 +1721,7 @@ async function confirmPixReceived(): Promise<void> {
       operatorId,
       payments,
       selectedCustomer.value?.id,
+      finalTotalCents,
     );
 
     const response = await authenticatedFetch("/api/sales", {
@@ -2274,7 +2484,12 @@ function captureScannerInput(event: KeyboardEvent): boolean {
         <template v-else>
           <div class="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
             <p class="text-sm text-blue-700">Total a pagar</p>
-            <p class="text-3xl font-bold text-blue-900">{{ formatCents(totalCents) }}</p>
+            <p class="text-3xl font-bold text-blue-900">{{ formatCents(totalWithFeesCents) }}</p>
+            <div v-if="totalFeeCents > 0" class="mt-2 rounded-md border border-blue-200 bg-white p-2 text-sm">
+              <p class="text-gray-700">Total original: {{ formatCents(totalCents) }}</p>
+              <p class="text-gray-700">Taxa operadora: {{ formatCents(totalFeeCents) }} ({{ feeRateLabel }}%)</p>
+              <p class="font-semibold text-blue-900">Total com taxa: {{ formatCents(totalWithFeesCents) }}</p>
+            </div>
           </div>
 
           <div class="mt-4 space-y-3">
@@ -2286,6 +2501,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               <select
                 v-model="row.method"
                 class="h-11 rounded-md border border-slate-300 px-3 outline-none focus:border-blue-500"
+                @change="handlePaymentMethodChange(row)"
               >
                 <option
                   v-for="method in paymentMethods"
@@ -2313,6 +2529,45 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               >
                 Remover
               </button>
+
+              <div
+                v-if="isCardMethod(row.method)"
+                class="rounded-md border border-slate-200 bg-slate-50 p-3 md:col-span-3"
+              >
+                <label class="mb-1 block text-xs font-semibold text-slate-700">Maquininha *</label>
+                <select
+                  v-model="row.card_machine_id"
+                  class="h-10 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-blue-500"
+                  :disabled="loadingCardMachines"
+                >
+                  <option value="" disabled>Selecione uma maquininha ativa</option>
+                  <option v-for="machine in cardMachines" :key="machine.id" :value="machine.id">
+                    {{ machine.name }} - {{ machine.absorb_fee ? "Absorver taxa" : "Repassar ao cliente" }}
+                  </option>
+                </select>
+
+                <template v-if="row.method === PAYMENT_METHODS.CREDIT_CARD">
+                  <label class="mb-1 mt-3 block text-xs font-semibold text-slate-700">Parcelamento</label>
+                  <select
+                    v-model="row.installments"
+                    class="h-10 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-blue-500"
+                  >
+                    <option
+                      v-for="opt in getInstallmentOptions(row)"
+                      :key="opt.value"
+                      :value="opt.value"
+                    >
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </template>
+
+                <p v-if="getFeeCentsForRow(row) > 0" class="mt-2 text-xs text-slate-700">
+                  Valor base: {{ formatCents(parseCurrencyInputToCents(row.amountInput)) }} | Taxa: {{
+                    formatCents(getFeeCentsForRow(row))
+                  }} | Total com taxa: {{ formatCents(getAmountWithFeeCentsForRow(row)) }}
+                </p>
+              </div>
             </div>
 
             <button

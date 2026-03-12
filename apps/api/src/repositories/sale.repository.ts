@@ -32,7 +32,7 @@ export class SaleRepository {
         sum + Math.round(item.unit_price_cents * item.quantity) - item.discount_cents,
       0,
     );
-    const totalCents = subtotalCents - payload.discount_cents;
+    const totalCents = payload.total_cents ?? (subtotalCents - payload.discount_cents);
 
     return prisma.$transaction(async (tx) => {
       const customer = await this.findCustomerForSale(tx, payload.customer_id);
@@ -67,6 +67,8 @@ export class SaleRepository {
             create: payload.payments.map((payment) => ({
               method: payment.method,
               amount_cents: payment.amount_cents,
+              ...(payment.installments !== undefined ? { installments: payment.installments } : {}),
+              ...(payment.applied_rate !== undefined ? { applied_rate: payment.applied_rate } : {}),
             })),
           },
         },

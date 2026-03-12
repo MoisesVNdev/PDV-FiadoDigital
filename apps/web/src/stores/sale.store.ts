@@ -100,6 +100,7 @@ export const useSaleStore = defineStore("sale", () => {
     operatorId: string,
     payments: SalePayment[],
     customerId?: string,
+    finalTotalCents?: number,
   ): CreateSalePayload {
     return {
       uuid: saleUuid.value ?? crypto.randomUUID(),
@@ -107,6 +108,7 @@ export const useSaleStore = defineStore("sale", () => {
       operator_id: operatorId,
       payment_method: paymentMethod as CreateSalePayload["payment_method"],
       discount_cents: discountCentsState.value,
+      ...(typeof finalTotalCents === "number" ? { total_cents: finalTotalCents } : {}),
       payments,
       customer_id: customerId,
       items: items.value.map((item) => ({
