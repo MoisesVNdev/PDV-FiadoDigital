@@ -6,6 +6,7 @@ export const useAuthStore = defineStore("auth", () => {
   const accessToken = ref<string | null>(null);
   const user = ref<User | null>(null);
   const isRestoringSession = ref(false);
+  let restoreAuthPromise: Promise<boolean> | null = null;
 
   const isAuthenticated = computed(() => !!accessToken.value);
 
@@ -20,38 +21,43 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   async function tryRestoreAuth(): Promise<boolean> {
-    if (isRestoringSession.value) {
-      return false;
+    if (restoreAuthPromise) {
+      return restoreAuthPromise;
     }
 
     isRestoringSession.value = true;
 
-    try {
-      const response = await fetch("/api/auth/refresh", {
-        method: "POST",
-        credentials: "include",
-      });
+    restoreAuthPromise = (async () => {
+      try {
+        const response = await fetch("/api/auth/refresh", {
+          method: "POST",
+          credentials: "include",
+        });
 
-      if (!response.ok) {
+        if (!response.ok) {
+          clearAuth();
+          return false;
+        }
+
+        const data = await response.json();
+
+        if (data.data?.accessToken && data.data?.user) {
+          setAuth(data.data.accessToken, data.data.user);
+          return true;
+        }
+
         clearAuth();
         return false;
+      } catch {
+        clearAuth();
+        return false;
+      } finally {
+        isRestoringSession.value = false;
+        restoreAuthPromise = null;
       }
+    })();
 
-      const data = await response.json();
-      
-      if (data.data?.accessToken && data.data?.user) {
-        setAuth(data.data.accessToken, data.data.user);
-        return true;
-      }
-
-      clearAuth();
-      return false;
-    } catch {
-      clearAuth();
-      return false;
-    } finally {
-      isRestoringSession.value = false;
-    }
+    return restoreAuthPromise;
   }
 
   return {

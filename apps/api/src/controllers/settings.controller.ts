@@ -19,6 +19,14 @@ export class SettingsController {
         discount_limit_daily: req.body.discount_limit_daily,
         discount_limit_weekly: req.body.discount_limit_weekly,
         discount_limit_monthly: req.body.discount_limit_monthly,
+        store_name: req.body.store_name,
+        store_cnpj: req.body.store_cnpj,
+        store_address: req.body.store_address,
+        store_phone: req.body.store_phone,
+        receipt_footer: req.body.receipt_footer,
+        fiado_max_days: req.body.fiado_max_days,
+        fiado_allow_inactive: req.body.fiado_allow_inactive,
+        fiado_blocked_message: req.body.fiado_blocked_message,
       });
 
       res.json({ success: true, data: settings });

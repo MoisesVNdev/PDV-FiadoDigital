@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
+import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import { useApi } from "@/composables/use-api.js";
+import { useConfirm } from "@/composables/use-confirm.js";
+import { useToast } from "@/composables/use-toast.js";
 import { useAuthStore } from "@/stores/auth.store.js";
 
 const { authenticatedFetch } = useApi();
@@ -38,8 +41,10 @@ interface FormErrors {
 
 const employees = ref<Employee[]>([]);
 const showModal = ref(false);
-const showToast = ref(false);
-const toastMessage = ref("");
+const { showToast, toastMessage, toastType, toast } = useToast();
+const { showConfirm, confirmTitle, confirmMessage, confirmLabel, confirm, onConfirm, onCancel } = useConfirm();
+const modalRef = ref<HTMLElement | null>(null);
+const lastFocusedElement = ref<HTMLElement | null>(null);
 const isEditMode = ref(false);
 const editingId = ref<string | null>(null);
 const loading = ref(false);
@@ -118,6 +123,7 @@ function validateForm(): boolean {
 }
 
 function openCreateModal(): void {
+  lastFocusedElement.value = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   isEditMode.value = false;
   editingId.value = null;
   formData.value = {
@@ -131,9 +137,11 @@ function openCreateModal(): void {
   };
   formErrors.value = {};
   showModal.value = true;
+  focusFirstModalField();
 }
 
 function openEditModal(employee: Employee): void {
+  lastFocusedElement.value = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   isEditMode.value = true;
   editingId.value = employee.id;
   formData.value = {
@@ -147,6 +155,7 @@ function openEditModal(employee: Employee): void {
   };
   formErrors.value = {};
   showModal.value = true;
+  focusFirstModalField();
 }
 
 function closeModal(): void {
@@ -161,14 +170,54 @@ function closeModal(): void {
     is_active: true,
   };
   formErrors.value = {};
+  lastFocusedElement.value?.focus();
+}
+
+async function focusFirstModalField(): Promise<void> {
+  await nextTick();
+  const firstFocusable = modalRef.value?.querySelector<HTMLElement>(
+    "input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])",
+  );
+  firstFocusable?.focus();
+}
+
+function handleModalKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    closeModal();
+    return;
+  }
+
+  if (event.key !== "Tab" || !modalRef.value) {
+    return;
+  }
+
+  const focusableElements = Array.from(
+    modalRef.value.querySelectorAll<HTMLElement>(
+      "input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])",
+    ),
+  ).filter((element) => !element.hasAttribute("aria-hidden"));
+
+  if (focusableElements.length === 0) {
+    return;
+  }
+
+  const first = focusableElements[0];
+  const last = focusableElements[focusableElements.length - 1];
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last?.focus();
+    return;
+  }
+
+  if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first?.focus();
+  }
 }
 
 function showSuccessToast(message: string): void {
-  toastMessage.value = message;
-  showToast.value = true;
-  setTimeout(() => {
-    showToast.value = false;
-  }, 3000);
+  toast(message);
 }
 
 async function submitForm(): Promise<void> {
@@ -224,6 +273,18 @@ async function submitForm(): Promise<void> {
 }
 
 async function toggleStatus(employee: Employee): Promise<void> {
+  if (employee.is_active) {
+    const ok = await confirm({
+      title: "Desativar funcionário",
+      message: `Tem certeza que deseja desativar \"${employee.name}\"? Ele perderá acesso ao sistema.`,
+      confirmLabel: "Desativar",
+    });
+
+    if (!ok) {
+      return;
+    }
+  }
+
   try {
     const response = await authenticatedFetch(`/api/users/${employee.id}`, {
       method: "PUT",
@@ -273,13 +334,14 @@ async function toggleStatus(employee: Employee): Promise<void> {
         <!-- Listagem -->
         <div class="mt-6 overflow-x-auto rounded-lg border border-gray-200 bg-white">
           <table class="w-full">
+            <caption class="sr-only">Lista de funcionarios cadastrados</caption>
             <thead class="bg-gray-50">
               <tr>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Nome</th>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Usuário</th>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Cargo</th>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
-                <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
+                <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Nome</th>
+                <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Usuário</th>
+                <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Cargo</th>
+                <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
+                <th scope="col" class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-200">
@@ -328,14 +390,18 @@ async function toggleStatus(employee: Employee): Promise<void> {
         <!-- Modal -->
         <div
           v-if="showModal"
+          ref="modalRef"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="employee-modal-title"
           @click.self="closeModal"
-          @keydown.escape="closeModal"
+          @keydown="handleModalKeydown"
         >
           <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <!-- Cabeçalho -->
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">
+              <h2 id="employee-modal-title" class="text-xl font-bold text-gray-900">
                 {{ isEditMode ? "Editar Funcionário" : "Novo Funcionário" }}
               </h2>
               <button
@@ -514,12 +580,26 @@ async function toggleStatus(employee: Employee): Promise<void> {
         <!-- Toast de Sucesso -->
         <div
           v-if="showToast"
-          class="fixed bottom-4 right-4 z-50 rounded-lg bg-success px-6 py-3 text-white shadow-lg"
-          role="alert"
+          :role="toastType === 'error' ? 'alert' : 'status'"
+          :aria-live="toastType === 'error' ? 'assertive' : 'polite'"
+          aria-atomic="true"
+          :class="[
+            'fixed bottom-4 right-4 z-50 rounded-lg px-6 py-3 text-white shadow-lg',
+            toastType === 'error' ? 'bg-danger' : toastType === 'warning' ? 'bg-warning' : 'bg-success',
+          ]"
         >
           {{ toastMessage }}
         </div>
       </main>
     </div>
   </div>
+
+  <ConfirmDialog
+    :open="showConfirm"
+    :title="confirmTitle"
+    :message="confirmMessage"
+    :confirm-label="confirmLabel"
+    @confirm="onConfirm"
+    @cancel="onCancel"
+  />
 </template>

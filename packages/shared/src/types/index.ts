@@ -1,5 +1,11 @@
 export type { User, CreateUserPayload, UpdateUserData } from "./user.js";
-export type { Product, ProductWeightUnit, CreateProductPayload, UpdateProductPayload } from "./product.js";
+export type {
+	Product,
+	ProductWeightUnit,
+	CreateProductPayload,
+	UpdateProductPayload,
+	ProductQueryParams,
+} from "./product.js";
 export type { Brand, CreateBrandPayload, UpdateBrandPayload } from "./brand.js";
 export type { ProductType, CreateProductTypePayload, UpdateProductTypePayload } from "./product-type.js";
 export type { CardMachine, CardMachineRate, CreateCardMachinePayload, UpdateCardMachinePayload } from "./card-machine.js";

@@ -45,3 +45,10 @@ export type CreateProductPayload = {
 };
 
 export type UpdateProductPayload = Partial<CreateProductPayload>;
+
+export interface ProductQueryParams {
+  barcode?: string;
+  search?: string;
+  page?: number;
+  per_page?: number;
+}

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { useRouter } from "vue-router";
-import { useAuthStore } from "@/stores/auth.store.js";
+import { onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
+import { useAuth } from "@/composables/use-auth.js";
 
-const router = useRouter();
-const auth = useAuthStore();
+const route = useRoute();
+const { login } = useAuth();
 
 const username = ref("");
 const password = ref("");
@@ -16,31 +16,24 @@ async function handleLogin(): Promise<void> {
   loading.value = true;
 
   try {
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        username: username.value,
-        password: password.value,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      error.value = data.message ?? "Erro ao fazer login";
+    await login(username.value, password.value);
+  } catch (caughtError) {
+    if (caughtError instanceof Error && caughtError.message.trim()) {
+      error.value = caughtError.message;
       return;
     }
 
-    auth.setAuth(data.data.accessToken, data.data.user);
-    router.push({ name: "dashboard" });
-  } catch {
     error.value = "Servidor indisponível. Aguarde o retorno da conexão.";
   } finally {
     loading.value = false;
   }
 }
+
+onMounted(() => {
+  if (route.query.logout === "failed") {
+    error.value = "Não foi possível concluir o logout no servidor. Você foi desconectado localmente.";
+  }
+});
 </script>
 
 <template>

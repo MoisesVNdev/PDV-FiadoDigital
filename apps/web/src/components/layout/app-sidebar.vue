@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { useAuthStore } from "@/stores/auth.store.js";
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
+import { useLayoutState } from "@/composables/use-layout-state.js";
 
 const auth = useAuthStore();
+const { mobileMenuOpen, closeMobileMenu } = useLayoutState();
 
 type NavItem = { label: string; to: string; roles: string[] };
 
@@ -21,6 +23,22 @@ const visibleItems = computed(() =>
     item.roles.includes(auth.user?.role ?? ""),
   ),
 );
+
+function handleEscape(event: KeyboardEvent): void {
+  if (event.key !== "Escape") {
+    return;
+  }
+
+  closeMobileMenu();
+}
+
+onMounted(() => {
+  window.addEventListener("keydown", handleEscape);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleEscape);
+});
 </script>
 
 <template>
@@ -32,6 +50,34 @@ const visibleItems = computed(() =>
         :to="item.to"
         class="rounded px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-primary-light hover:text-white"
         active-class="bg-primary text-white"
+      >
+        {{ item.label }}
+      </RouterLink>
+    </nav>
+  </aside>
+
+  <div
+    v-if="mobileMenuOpen"
+    class="fixed inset-0 z-40 bg-black/50 md:hidden"
+    @click="closeMobileMenu"
+  ></div>
+
+  <aside
+    :class="[
+      'fixed inset-y-0 left-0 z-50 w-64 border-r bg-white transition-transform duration-200 md:hidden',
+      mobileMenuOpen ? 'translate-x-0' : '-translate-x-full',
+    ]"
+    role="navigation"
+    aria-label="Menu de navegação"
+  >
+    <nav class="flex flex-col gap-1 p-4" aria-label="Menu principal mobile">
+      <RouterLink
+        v-for="item in visibleItems"
+        :key="`mobile-${item.to}`"
+        :to="item.to"
+        class="rounded px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-primary-light hover:text-white"
+        active-class="bg-primary text-white"
+        @click="closeMobileMenu"
       >
         {{ item.label }}
       </RouterLink>

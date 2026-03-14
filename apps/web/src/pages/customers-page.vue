@@ -3,7 +3,12 @@ import { formatCents, PAYMENT_METHODS, type SaleWithPayments } from "@pdv/shared
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
+import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import { useApi } from "@/composables/use-api.js";
+import { useConfirm } from "@/composables/use-confirm.js";
+import { useFormatting } from "@/composables/use-formatting.js";
+import { useToast } from "@/composables/use-toast.js";
+import { useCustomerStore } from "@/stores/customer.store.js";
 
 interface Customer {
   id: string;
@@ -67,6 +72,7 @@ interface PaymentHistoryRow {
 }
 
 const { authenticatedFetch } = useApi();
+const customerStore = useCustomerStore();
 
 const activeTab = ref<TabKey>("customers");
 
@@ -87,6 +93,7 @@ let searchTimeoutId: ReturnType<typeof setTimeout> | null = null;
 const showModal = ref(false);
 const isEditMode = ref(false);
 const editingId = ref<string | null>(null);
+const originalIsActive = ref(true);
 const loadingSubmit = ref(false);
 
 const showPaymentModal = ref(false);
@@ -98,8 +105,9 @@ const paymentFormData = ref<PaymentFormData>({
 const paymentFormErrors = ref<PaymentFormErrors>({});
 const paymentLoading = ref(false);
 
-const showToast = ref(false);
-const toastMessage = ref("");
+const { showToast, toastMessage, toastType, toast } = useToast();
+const { showConfirm, confirmTitle, confirmMessage, confirmLabel, confirm, onConfirm, onCancel } = useConfirm();
+const { formatPhoneForDisplay, formatPhoneForInput, normalizePhoneDigits } = useFormatting();
 
 const allCustomersForHistory = ref<Customer[]>([]);
 const loadingHistoryCustomers = ref(false);
@@ -486,68 +494,6 @@ function printReceipt(): void {
   window.print();
 }
 
-function normalizePhoneDigits(rawValue: string): string {
-  return rawValue.replace(/\D/g, "").slice(0, 11);
-}
-
-function formatPhoneForDisplay(rawValue: string | null): string {
-  const digits = rawValue ? rawValue.replace(/\D/g, "").slice(0, 11) : "";
-
-  if (!digits) {
-    return "-";
-  }
-
-  if (digits.length < 3) {
-    return `(${digits}`;
-  }
-
-  const areaCode = digits.slice(0, 2);
-  const firstDigit = digits.slice(2, 3);
-  const mid = digits.slice(3, 7);
-  const end = digits.slice(7, 11);
-
-  if (!firstDigit) {
-    return `(${areaCode})`;
-  }
-
-  if (!mid) {
-    return `(${areaCode}) ${firstDigit}`;
-  }
-
-  if (!end) {
-    return `(${areaCode}) ${firstDigit} ${mid}`;
-  }
-
-  return `(${areaCode}) ${firstDigit} ${mid}-${end}`;
-}
-
-function formatPhoneForInput(rawValue: string): string {
-  const digits = normalizePhoneDigits(rawValue);
-
-  if (!digits) {
-    return "";
-  }
-
-  if (digits.length < 3) {
-    return `(${digits}`;
-  }
-
-  const areaCode = digits.slice(0, 2);
-  const firstDigit = digits.slice(2, 3);
-  const mid = digits.slice(3, 7);
-  const end = digits.slice(7, 11);
-
-  if (!mid) {
-    return `(${areaCode}) ${firstDigit}`;
-  }
-
-  if (!end) {
-    return `(${areaCode}) ${firstDigit} ${mid}`;
-  }
-
-  return `(${areaCode}) ${firstDigit} ${mid}-${end}`;
-}
-
 function handlePhoneInput(event: Event): void {
   const target = event.target as HTMLInputElement;
   formData.value.phone = formatPhoneForInput(target.value);
@@ -690,15 +636,14 @@ async function loadHistoryCustomers(): Promise<void> {
   historyCustomersError.value = null;
 
   try {
-    const response = await authenticatedFetch("/api/customers?only_active=false&per_page=100&sort_by=name&sort_order=asc");
-    const data = await response.json();
+    await customerStore.fetchIfStale(authenticatedFetch);
 
-    if (!response.ok) {
-      historyCustomersError.value = data.message || "Não foi possível carregar os clientes.";
+    if (customerStore.error) {
+      historyCustomersError.value = customerStore.error;
       return;
     }
 
-    allCustomersForHistory.value = data.data as Customer[];
+    allCustomersForHistory.value = customerStore.customers as Customer[];
   } catch (error) {
     console.error("Erro ao carregar clientes para histórico:", error);
     historyCustomersError.value = "Erro de conexão ao carregar clientes.";
@@ -874,6 +819,7 @@ function openCreateModal(): void {
 function openEditModal(customer: Customer): void {
   isEditMode.value = true;
   editingId.value = customer.id;
+  originalIsActive.value = customer.is_active;
   formData.value = {
     name: customer.name,
     phone: customer.phone ? formatPhoneForInput(customer.phone) : "",
@@ -911,11 +857,7 @@ function closePaymentModal(): void {
 }
 
 function showSuccessToast(message: string): void {
-  toastMessage.value = message;
-  showToast.value = true;
-  setTimeout(() => {
-    showToast.value = false;
-  }, 3000);
+  toast(message);
 }
 
 function validateForm(): boolean {
@@ -985,6 +927,18 @@ async function submitForm(): Promise<void> {
     return;
   }
 
+  if (isEditMode.value && originalIsActive.value && !formData.value.is_active) {
+    const ok = await confirm({
+      title: "Desativar cliente",
+      message: `Tem certeza que deseja desativar "${formData.value.name}"? O cliente não poderá realizar compras no fiado.`,
+      confirmLabel: "Desativar",
+    });
+
+    if (!ok) {
+      return;
+    }
+  }
+
   loadingSubmit.value = true;
   formErrors.value.submit = undefined;
 
@@ -1024,6 +978,7 @@ async function submitForm(): Promise<void> {
 
     closeModal();
     await loadCustomers();
+    customerStore.invalidate();
     showSuccessToast(
       isEditMode.value ? "Cliente atualizado com sucesso!" : "Cliente cadastrado com sucesso!",
     );
@@ -1071,6 +1026,7 @@ async function submitPaymentForm(): Promise<void> {
     }
 
     closePaymentModal();
+    customerStore.invalidate();
     await loadCustomers();
 
     if (selectedHistoryCustomer.value?.id === paidCustomerId) {
@@ -1205,9 +1161,11 @@ async function submitPaymentForm(): Promise<void> {
           <!-- Table -->
           <div v-else class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
           <table class="w-full min-w-[1200px]">
+            <caption class="sr-only">Lista de clientes cadastrados</caption>
             <thead class="bg-gray-50">
               <tr>
                 <th
+                  scope="col"
                   class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                   @click="toggleSortOrder('name')"
                 >
@@ -1216,8 +1174,9 @@ async function submitPaymentForm(): Promise<void> {
                     <span class="text-xs">{{ getSortIcon("name") }}</span>
                   </span>
                 </th>
-                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Telefone</th>
+                <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Telefone</th>
                 <th
+                  scope="col"
                   class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                   @click="toggleSortOrder('credit_limit_cents')"
                 >
@@ -1227,6 +1186,7 @@ async function submitPaymentForm(): Promise<void> {
                   </span>
                 </th>
                 <th
+                  scope="col"
                   class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                   @click="toggleSortOrder('payment_due_day')"
                 >
@@ -1236,6 +1196,7 @@ async function submitPaymentForm(): Promise<void> {
                   </span>
                 </th>
                 <th
+                  scope="col"
                   class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                   @click="toggleSortOrder('current_debt_cents')"
                 >
@@ -1245,6 +1206,7 @@ async function submitPaymentForm(): Promise<void> {
                   </span>
                 </th>
                 <th
+                  scope="col"
                   class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                   @click="toggleSortOrder('is_active')"
                 >
@@ -1253,7 +1215,7 @@ async function submitPaymentForm(): Promise<void> {
                     <span class="text-xs">{{ getSortIcon("is_active") }}</span>
                   </span>
                 </th>
-                <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
+                <th scope="col" class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-200">
@@ -1435,6 +1397,7 @@ async function submitPaymentForm(): Promise<void> {
                 <button
                   v-if="selectedHistoryCustomer"
                   type="button"
+                  aria-label="Limpar cliente selecionado no historico de compras"
                   @click="clearSelectedHistoryCustomer"
                   class="rounded bg-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-300"
                 >
@@ -1545,13 +1508,14 @@ async function submitPaymentForm(): Promise<void> {
               <template v-else>
                 <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
                   <table class="w-full min-w-[720px]">
+                    <caption class="sr-only">Histórico de compras em fiado do cliente selecionado</caption>
                     <thead class="bg-gray-50">
                       <tr>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Dia</th>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Horário</th>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Valor em Fiado</th>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Tipo de Pagamento</th>
-                        <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Nota Fiscal</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Dia</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Horário</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Valor em Fiado</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Tipo de Pagamento</th>
+                        <th scope="col" class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Recibo</th>
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200">
@@ -1565,11 +1529,11 @@ async function submitPaymentForm(): Promise<void> {
                         <td class="px-6 py-4 text-center">
                           <button
                             type="button"
-                            aria-label="Ver nota fiscal"
+                            aria-label="Ver recibo"
                             class="rounded bg-primary px-3 py-1 text-xs font-semibold text-white transition hover:bg-primary-dark"
                             @click="openReceiptModal(sale)"
                           >
-                            NF
+                            Recibo
                           </button>
                         </td>
                       </tr>
@@ -1683,6 +1647,7 @@ async function submitPaymentForm(): Promise<void> {
                 <button
                   v-if="selectedHistoryCustomer"
                   type="button"
+                  aria-label="Limpar cliente selecionado no historico de pagamentos"
                   @click="clearSelectedHistoryCustomer"
                   class="rounded bg-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-300"
                 >
@@ -1793,13 +1758,14 @@ async function submitPaymentForm(): Promise<void> {
               <template v-else>
                 <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
                   <table class="w-full min-w-[760px]">
+                    <caption class="sr-only">Histórico de pagamentos de fiado do cliente selecionado</caption>
                     <thead class="bg-gray-50">
                       <tr>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Dia</th>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Horário</th>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Fiado em Aberto</th>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Valor Pago</th>
-                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Tipo de Pagamento</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Dia</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Horário</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Fiado em Aberto</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Valor Pago</th>
+                        <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Tipo de Pagamento</th>
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200">
@@ -1905,11 +1871,14 @@ async function submitPaymentForm(): Promise<void> {
         <div
           v-if="showReceiptModal && selectedReceiptSale"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="customer-receipt-modal-title"
           @click.self="closeReceiptModal"
         >
           <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">Recibo da Compra</h2>
+              <h2 id="customer-receipt-modal-title" class="text-xl font-bold text-gray-900">Comprovante de Compra</h2>
               <button
                 type="button"
                 class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
@@ -2028,11 +1997,14 @@ async function submitPaymentForm(): Promise<void> {
         <div
           v-if="showPaymentModal && selectedPaymentCustomer"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="customer-payment-modal-title"
           @click.self="closePaymentModal"
         >
           <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">Registrar Pagamento de Fiado</h2>
+              <h2 id="customer-payment-modal-title" class="text-xl font-bold text-gray-900">Registrar Pagamento de Fiado</h2>
               <button
                 type="button"
                 class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
@@ -2079,6 +2051,7 @@ async function submitPaymentForm(): Promise<void> {
                   id="payment_amount"
                   :value="paymentFormData.amount_input"
                   type="text"
+                  autofocus
                   inputmode="numeric"
                   placeholder="R$ 0,00"
                   class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -2153,11 +2126,14 @@ async function submitPaymentForm(): Promise<void> {
         <div
           v-if="showModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="customer-form-modal-title"
           @click.self="closeModal"
         >
           <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">
+              <h2 id="customer-form-modal-title" class="text-xl font-bold text-gray-900">
                 {{ isEditMode ? "Editar Cliente" : "Novo Cliente" }}
               </h2>
               <button
@@ -2194,6 +2170,7 @@ async function submitPaymentForm(): Promise<void> {
                   id="name"
                   v-model="formData.name"
                   type="text"
+                  autofocus
                   maxlength="100"
                   class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
@@ -2311,12 +2288,26 @@ async function submitPaymentForm(): Promise<void> {
 
         <div
           v-if="showToast"
-          class="fixed bottom-4 right-4 z-50 rounded-lg bg-success px-6 py-3 text-white shadow-lg"
-          role="alert"
+          :role="toastType === 'error' ? 'alert' : 'status'"
+          :aria-live="toastType === 'error' ? 'assertive' : 'polite'"
+          aria-atomic="true"
+          :class="[
+            'fixed bottom-4 right-4 z-50 rounded-lg px-6 py-3 text-white shadow-lg',
+            toastType === 'error' ? 'bg-danger' : toastType === 'warning' ? 'bg-warning' : 'bg-success',
+          ]"
         >
           {{ toastMessage }}
         </div>
       </main>
     </div>
   </div>
+
+  <ConfirmDialog
+    :open="showConfirm"
+    :title="confirmTitle"
+    :message="confirmMessage"
+    :confirm-label="confirmLabel"
+    @confirm="onConfirm"
+    @cancel="onCancel"
+  />
 </template>

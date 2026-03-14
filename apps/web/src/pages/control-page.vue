@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { formatCents, parseCentsFromString, type Brand, type ProductType, type StockMovement } from "@pdv/shared";
+import { formatCents, type Brand, type ProductType, type StockMovement } from "@pdv/shared";
+import { RecycleScroller } from "vue-virtual-scroller";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
 import { useApi } from "@/composables/use-api.js";
+import { useFormatting } from "@/composables/use-formatting.js";
+import { useToast } from "@/composables/use-toast.js";
 
 type TabKey = "stock" | "cash";
 type SortDirection = "asc" | "desc";
@@ -159,8 +162,8 @@ const cancellationsError = ref<string | null>(null);
 const cancellationRows = ref<CancellationRow[]>([]);
 const operatorAlertsToday = ref<OperatorAlert[]>([]);
 
-const showToast = ref(false);
-const toastMessage = ref("");
+const { showToast, toastMessage, toastType, toast } = useToast();
+const { formatCurrencyInput, parseCurrencyInputToCents } = useFormatting();
 
 const stockPagesArray = computed(() => {
   const pages: number[] = [];
@@ -333,12 +336,7 @@ watch(
 );
 
 function showSuccessToast(message: string): void {
-  toastMessage.value = message;
-  showToast.value = true;
-
-  setTimeout(() => {
-    showToast.value = false;
-  }, 3000);
+  toast(message);
 }
 
 function formatDateTime(dateTime: string): string {
@@ -400,6 +398,10 @@ function formatMovementQuantity(quantity: number): string {
   return `-${formatted}`;
 }
 
+function toStockMovement(item: unknown): StockMovement {
+  return item as StockMovement;
+}
+
 function movementTypeLabel(type: string): string {
   if (type === "entry") {
     return "Entrada";
@@ -432,24 +434,6 @@ function cancellationStatusClass(status: string): string {
   return status === "cancelled"
     ? "bg-red-100 text-red-700"
     : "bg-orange-100 text-orange-700";
-}
-
-function formatCurrencyInput(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-
-  if (!digits) {
-    return "";
-  }
-
-  return formatCents(Number.parseInt(digits, 10));
-}
-
-function parseCurrencyInputToCents(raw: string): number {
-  if (!raw.trim()) {
-    return 0;
-  }
-
-  return parseCentsFromString(raw);
 }
 
 function handleDailyLimitInput(event: Event): void {
@@ -936,46 +920,53 @@ async function loadCancellations(): Promise<void> {
 
           <div v-else class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
             <table class="w-full min-w-[1200px]">
+              <caption class="sr-only">Resumo e analise de estoque por produto</caption>
               <thead class="bg-gray-50">
                 <tr>
                   <th
+                    scope="col"
                     class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                     @click="toggleStockSort('name')"
                   >
                     <span class="flex items-center gap-2">Nome <span class="text-xs">{{ getSortIndicator('name') }}</span></span>
                   </th>
                   <th
-                    class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                    scope="col"
                     @click="toggleStockSort('type')"
+                    class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                   >
                     <span class="flex items-center gap-2">Tipo <span class="text-xs">{{ getSortIndicator('type') }}</span></span>
                   </th>
                   <th
+                    scope="col"
                     class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                     @click="toggleStockSort('brand')"
                   >
                     <span class="flex items-center gap-2">Marca <span class="text-xs">{{ getSortIndicator('brand') }}</span></span>
                   </th>
                   <th
+                    scope="col"
                     class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                     @click="toggleStockSort('stock')"
                   >
                     <span class="flex items-center gap-2">Estoque <span class="text-xs">{{ getSortIndicator('stock') }}</span></span>
                   </th>
                   <th
+                    scope="col"
                     class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                     @click="toggleStockSort('average_cost')"
                   >
                     <span class="flex items-center gap-2">Custo Médio <span class="text-xs">{{ getSortIndicator('average_cost') }}</span></span>
                   </th>
                   <th
+                    scope="col"
                     class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                     @click="toggleStockSort('stock_value')"
                   >
                     <span class="flex items-center gap-2">Valor em Estoque <span class="text-xs">{{ getSortIndicator('stock_value') }}</span></span>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Alerta</th>
-                  <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Histórico</th>
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Alerta</th>
+                  <th scope="col" class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Histórico</th>
                 </tr>
               </thead>
 
@@ -1252,13 +1243,14 @@ async function loadCancellations(): Promise<void> {
 
             <div v-else class="mt-4 overflow-x-auto rounded-lg border border-gray-200">
               <table class="w-full min-w-[760px]">
+                <caption class="sr-only">Lista de cancelamentos e estornos no periodo selecionado</caption>
                 <thead class="bg-gray-50">
                   <tr>
-                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Data/Hora</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Operador</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Total</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Status</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Terminal</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Data/Hora</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Operador</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Total</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Status</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Terminal</th>
                   </tr>
                 </thead>
 
@@ -1290,12 +1282,16 @@ async function loadCancellations(): Promise<void> {
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
+      aria-labelledby="stock-history-modal-title"
     >
       <div class="w-full max-w-5xl rounded-lg bg-white shadow-xl">
         <header class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-          <h3 class="text-lg font-semibold text-gray-900">Histórico de Movimentação - {{ historyProduct.name }}</h3>
+          <h3 id="stock-history-modal-title" class="text-lg font-semibold text-gray-900">
+            Histórico de Movimentação - {{ historyProduct.name }}
+          </h3>
           <button
             type="button"
+            aria-label="Fechar modal de historico"
             class="rounded p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
             @click="closeHistoryModal"
           >
@@ -1322,35 +1318,40 @@ async function loadCancellations(): Promise<void> {
             Nenhuma movimentação encontrada para este produto.
           </div>
 
-          <div v-else class="overflow-x-auto rounded-lg border border-gray-200">
-            <table class="w-full min-w-[900px]">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Data/Hora</th>
-                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Tipo</th>
-                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Quantidade</th>
-                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Custo Unit.</th>
-                  <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Descrição</th>
-                </tr>
-              </thead>
+          <div v-else class="rounded-lg border border-gray-200">
+            <div class="grid grid-cols-[180px_120px_120px_140px_minmax(0,1fr)] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+              <span>Data/Hora</span>
+              <span>Tipo</span>
+              <span>Quantidade</span>
+              <span>Custo Unit.</span>
+              <span>Descrição</span>
+            </div>
 
-              <tbody class="divide-y divide-gray-200">
-                <tr v-for="movement in stockMovements" :key="movement.id" class="hover:bg-gray-50">
-                  <td class="px-4 py-3 text-sm text-gray-700">{{ formatDateTime(movement.created_at) }}</td>
-                  <td class="px-4 py-3 text-sm">
+            <RecycleScroller
+              :items="stockMovements"
+              key-field="id"
+              :item-size="56"
+              class="max-h-[52vh] overflow-auto"
+              list-tag="div"
+              item-tag="div"
+            >
+              <template #default="{ item: movement }">
+                <div class="grid grid-cols-[180px_120px_120px_140px_minmax(0,1fr)] items-center gap-3 border-b border-gray-100 px-4 py-3 text-sm hover:bg-gray-50">
+                  <span class="text-gray-700">{{ formatDateTime(toStockMovement(movement).created_at) }}</span>
+                  <span>
                     <span
                       class="inline-flex rounded-full px-3 py-1 text-xs font-semibold"
-                      :class="movementTypeClass(movement.type)"
+                      :class="movementTypeClass(toStockMovement(movement).type)"
                     >
-                      {{ movementTypeLabel(movement.type) }}
+                      {{ movementTypeLabel(toStockMovement(movement).type) }}
                     </span>
-                  </td>
-                  <td class="px-4 py-3 text-sm text-gray-700">{{ formatMovementQuantity(movement.quantity) }}</td>
-                  <td class="px-4 py-3 text-sm text-gray-700">{{ displayCents(movement.unit_cost_cents) }}</td>
-                  <td class="px-4 py-3 text-sm text-gray-700">{{ movement.description || '—' }}</td>
-                </tr>
-              </tbody>
-            </table>
+                  </span>
+                  <span class="text-gray-700">{{ formatMovementQuantity(toStockMovement(movement).quantity) }}</span>
+                  <span class="text-gray-700">{{ displayCents(toStockMovement(movement).unit_cost_cents) }}</span>
+                  <span class="truncate text-gray-700" :title="toStockMovement(movement).description || '—'">{{ toStockMovement(movement).description || '—' }}</span>
+                </div>
+              </template>
+            </RecycleScroller>
           </div>
         </div>
 
@@ -1371,12 +1372,14 @@ async function loadCancellations(): Promise<void> {
       class="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
+      aria-labelledby="stock-adjustment-modal-title"
     >
       <div class="w-full max-w-lg rounded-lg bg-white shadow-xl">
         <header class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-          <h3 class="text-lg font-semibold text-gray-900">Registrar Ajuste Manual</h3>
+          <h3 id="stock-adjustment-modal-title" class="text-lg font-semibold text-gray-900">Registrar Ajuste Manual</h3>
           <button
             type="button"
+            aria-label="Fechar modal de ajuste de estoque"
             class="rounded p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
             @click="closeAdjustmentModal"
           >
@@ -1441,9 +1444,13 @@ async function loadCancellations(): Promise<void> {
 
     <div
       v-if="showToast"
-      class="fixed right-4 bottom-4 z-50 rounded bg-success px-4 py-2 text-sm text-white shadow-lg"
-      role="status"
-      aria-live="polite"
+      :role="toastType === 'error' ? 'alert' : 'status'"
+      :aria-live="toastType === 'error' ? 'assertive' : 'polite'"
+      aria-atomic="true"
+      :class="[
+        'fixed right-4 bottom-4 z-50 rounded px-4 py-2 text-sm text-white shadow-lg',
+        toastType === 'error' ? 'bg-danger' : toastType === 'warning' ? 'bg-warning' : 'bg-success',
+      ]"
     >
       {{ toastMessage }}
     </div>

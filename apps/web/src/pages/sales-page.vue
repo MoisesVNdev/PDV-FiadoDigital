@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {
   formatCents,
-  parseCentsFromString,
   PAYMENT_METHODS,
   type CardMachine,
   type CashRegister,
@@ -11,9 +10,14 @@ import {
 } from "@pdv/shared";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import QRCode from "qrcode";
+import { RecycleScroller } from "vue-virtual-scroller";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
+import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import { useApi } from "@/composables/use-api.js";
+import { useConfirm } from "@/composables/use-confirm.js";
+import { useFormatting } from "@/composables/use-formatting.js";
+import { useSaleCalculator } from "@/composables/use-sale-calculator.js";
 import { useWebSocket } from "@/composables/use-websocket.js";
 import { useAuthStore } from "@/stores/auth.store.js";
 import { useSaleStore } from "@/stores/sale.store.js";
@@ -33,11 +37,24 @@ type PaymentEntry = {
 };
 
 const { authenticatedFetch } = useApi();
+const {
+  normalizePhoneDigits,
+  formatPhoneForDisplay,
+  formatPhoneForInput,
+  formatStockQuantity,
+  parseCurrencyInputToCents,
+  formatCurrencyInput: toCurrencyMaskedValue,
+} = useFormatting();
+const { calcCardRate, applyCardFee, calcChange, validateFiadoCredit, buildSalePayload } = useSaleCalculator();
 const authStore = useAuthStore();
 const saleStore = useSaleStore();
-const { isConnected, lastMessage } = useWebSocket();
+const { isConnected, connectionWarning: wsConnectionWarning, lastMessage } = useWebSocket();
 
 const terminalId = ref(localStorage.getItem("pdv_terminal_id") || "PDV-01");
+
+const { showConfirm, confirmTitle, confirmMessage, confirmLabel, confirm, onConfirm, onCancel } = useConfirm();
+const pixCopied = ref(false);
+const showHotkeys = ref(false);
 
 if (!localStorage.getItem("pdv_terminal_id")) {
   localStorage.setItem("pdv_terminal_id", terminalId.value);
@@ -90,9 +107,10 @@ const weightedModalError = ref<string | null>(null);
 
 const showProductSearchModal = ref(false);
 const productSearchInput = ref("");
-const allProducts = ref<Product[]>([]);
+const productSearchResults = ref<Product[]>([]);
 const loadingAllProducts = ref(false);
 const productSearchError = ref<string | null>(null);
+let productSearchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const showPaymentModal = ref(false);
 const paymentRows = ref<PaymentEntry[]>([{ method: PAYMENT_METHODS.CASH, amountInput: "" }]);
@@ -116,8 +134,12 @@ const pixQRCodeLoading = ref(false);
 const pixQRCodeError = ref<string | null>(null);
 const pixQRCodeExpired = ref(false);
 const pixQRCodeCanvasRef = ref<HTMLCanvasElement | null>(null);
+const showPixManualConfirmModal = ref(false);
+const pixStatusPollingError = ref<string | null>(null);
+const pixStatusLabel = ref<string>("Aguardando confirmação do Pix...");
 
 let pixQRCodeCountdownInterval: ReturnType<typeof setInterval> | null = null;
+let pixStatusPollingInterval: ReturnType<typeof setInterval> | null = null;
 
 const showCashOutModal = ref(false);
 const showCashInModal = ref(false);
@@ -144,6 +166,8 @@ const hasModalOpen = computed(
     showWeightModal.value ||
     showProductSearchModal.value ||
     showPaymentModal.value ||
+    showPixQRCodeModal.value ||
+    showPixManualConfirmModal.value ||
     showCashOutModal.value ||
     showCashInModal.value ||
     showCustomerListModal.value,
@@ -217,13 +241,7 @@ const cashChangeCents = computed(() => {
     return 0;
   }
 
-  const change = cashReceivedCents.value - cashAmountRequiredCents.value;
-
-  if (change < 0) {
-    return 0;
-  }
-
-  return change;
+  return calcChange(cashReceivedCents.value, cashAmountRequiredCents.value, 0);
 });
 
 const weightedTotalCents = computed(() => {
@@ -290,24 +308,11 @@ const customerCanUseFiado = computed(() => {
     return false;
   }
 
-  return selectedCustomer.value.current_debt_cents < selectedCustomer.value.credit_limit_cents;
-});
-
-const productSearchResults = computed(() => {
-  const term = productSearchInput.value.trim().toLowerCase();
-
-  if (!term) {
-    return allProducts.value.slice(0, 30);
-  }
-
-  return allProducts.value
-    .filter((product) => {
-      return (
-        product.name.toLowerCase().includes(term) ||
-        (product.barcode || "").toLowerCase().includes(term)
-      );
-    })
-    .slice(0, 30);
+  return validateFiadoCredit(
+    selectedCustomer.value.credit_limit_cents,
+    selectedCustomer.value.current_debt_cents,
+    1,
+  ).valid;
 });
 
 const customerListResults = computed(() => {
@@ -357,7 +362,11 @@ const availableCreditCents = computed(() => {
     return 0;
   }
 
-  return selectedCustomer.value.credit_limit_cents - selectedCustomer.value.current_debt_cents;
+  return validateFiadoCredit(
+    selectedCustomer.value.credit_limit_cents,
+    selectedCustomer.value.current_debt_cents,
+    0,
+  ).availableCents;
 });
 
 const fiadoAllocationCents = computed(() => {
@@ -374,7 +383,11 @@ const hasFiadoInsufficientCredit = computed(() => {
     return false;
   }
 
-  return fiadoAllocationCents.value > availableCreditCents.value;
+  return !validateFiadoCredit(
+    selectedCustomer.value.credit_limit_cents,
+    selectedCustomer.value.current_debt_cents,
+    fiadoAllocationCents.value,
+  ).valid;
 });
 
 const usedPaymentMethods = computed(() => {
@@ -421,6 +434,16 @@ const pixQRCodeTimeoutFormatted = computed(() => {
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 });
 
+const pixKeySuffix = computed(() => {
+  const key = extractPixKeyFromPayload(pixQRCodePayload.value);
+
+  if (!key) {
+    return "não disponível";
+  }
+
+  return `...${key.slice(-4)}`;
+});
+
 onMounted(async () => {
   await checkOpenCashRegister();
 
@@ -440,6 +463,11 @@ onUnmounted(() => {
     clearInterval(clockInterval);
   }
 
+  if (productSearchDebounceTimeout) {
+    clearTimeout(productSearchDebounceTimeout);
+    productSearchDebounceTimeout = null;
+  }
+
   window.removeEventListener("online", handleOnlineStatus);
   window.removeEventListener("offline", handleOnlineStatus);
   window.removeEventListener("keydown", handleGlobalKeydown);
@@ -447,6 +475,9 @@ onUnmounted(() => {
   if (scannerTimer) {
     clearTimeout(scannerTimer);
   }
+
+  stopPixQRCodeCountdown();
+  stopPixStatusPolling();
 });
 
 watch(
@@ -459,6 +490,30 @@ watch(
     restoreProductInputFocus();
   },
 );
+
+watch(productSearchInput, (value) => {
+  if (!showProductSearchModal.value) {
+    return;
+  }
+
+  if (productSearchDebounceTimeout) {
+    clearTimeout(productSearchDebounceTimeout);
+    productSearchDebounceTimeout = null;
+  }
+
+  const query = value.trim();
+
+  if (query.length < 2) {
+    productSearchResults.value = [];
+    productSearchError.value = null;
+    loadingAllProducts.value = false;
+    return;
+  }
+
+  productSearchDebounceTimeout = setTimeout(() => {
+    void searchProductsServer(query);
+  }, 300);
+});
 
 watch(
   () => showWeightModal.value,
@@ -547,78 +602,56 @@ function formatDateTime(value: Date): string {
   return value.toLocaleString("pt-BR");
 }
 
-function normalizePhoneDigits(rawValue: string): string {
-  return rawValue.replace(/\D/g, "").slice(0, 11);
+function parsePixTlv(rawValue: string): Map<string, string> {
+  const fields = new Map<string, string>();
+  let offset = 0;
+
+  while (offset + 4 <= rawValue.length) {
+    const id = rawValue.slice(offset, offset + 2);
+    const size = Number.parseInt(rawValue.slice(offset + 2, offset + 4), 10);
+
+    if (Number.isNaN(size) || size < 0) {
+      break;
+    }
+
+    const start = offset + 4;
+    const end = start + size;
+
+    if (end > rawValue.length) {
+      break;
+    }
+
+    fields.set(id, rawValue.slice(start, end));
+    offset = end;
+  }
+
+  return fields;
 }
 
-function formatPhoneForDisplay(rawValue: string | null): string {
-  const digits = rawValue ? rawValue.replace(/\D/g, "").slice(0, 11) : "";
-
-  if (!digits) {
-    return "-";
+function extractPixKeyFromPayload(payload: string): string | null {
+  if (!payload) {
+    return null;
   }
 
-  if (digits.length < 3) {
-    return `(${digits}`;
+  const topLevelFields = parsePixTlv(payload);
+  const merchantAccountInfo = topLevelFields.get("26");
+
+  if (!merchantAccountInfo) {
+    return null;
   }
 
-  const areaCode = digits.slice(0, 2);
-  const firstDigit = digits.slice(2, 3);
-  const mid = digits.slice(3, 7);
-  const end = digits.slice(7, 11);
+  const merchantFields = parsePixTlv(merchantAccountInfo);
+  const key = merchantFields.get("01");
 
-  if (!firstDigit) {
-    return `(${areaCode})`;
+  if (!key) {
+    return null;
   }
 
-  if (!mid) {
-    return `(${areaCode}) ${firstDigit}`;
-  }
-
-  if (!end) {
-    return `(${areaCode}) ${firstDigit} ${mid}`;
-  }
-
-  return `(${areaCode}) ${firstDigit} ${mid}-${end}`;
+  return key.trim();
 }
 
-function formatPhoneForInput(rawValue: string): string {
-  const digits = normalizePhoneDigits(rawValue);
-
-  if (!digits) {
-    return "";
-  }
-
-  if (digits.length < 3) {
-    return `(${digits}`;
-  }
-
-  const areaCode = digits.slice(0, 2);
-  const firstDigit = digits.slice(2, 3);
-  const mid = digits.slice(3, 7);
-  const end = digits.slice(7, 11);
-
-  if (!mid) {
-    return `(${areaCode}) ${firstDigit}`;
-  }
-
-  if (!end) {
-    return `(${areaCode}) ${firstDigit} ${mid}`;
-  }
-
-  return `(${areaCode}) ${firstDigit} ${mid}-${end}`;
-}
-
-function formatStockQuantity(quantity: number, isBulk: boolean): string {
-  if (isBulk) {
-    const formatted = new Intl.NumberFormat("pt-BR", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 3,
-    }).format(quantity);
-    return `${formatted} kg`;
-  }
-
-  return `${Math.trunc(quantity)} un`;
+function toSearchProduct(item: unknown): Product {
+  return item as Product;
 }
 
 function handleCustomerPhoneInput(event: Event): void {
@@ -635,24 +668,6 @@ function restoreProductInputFocus(): void {
 async function focusWeightedInput(): Promise<void> {
   await nextTick();
   weightedInputRef.value?.focus();
-}
-
-function parseCurrencyInputToCents(input: string): number {
-  if (!input.trim()) {
-    return 0;
-  }
-
-  return parseCentsFromString(input);
-}
-
-function toCurrencyMaskedValue(rawInput: string): string {
-  const digits = rawInput.replace(/\D/g, "");
-
-  if (!digits) {
-    return "";
-  }
-
-  return formatCents(Number.parseInt(digits, 10));
 }
 
 function handlePaymentRowCurrencyInput(event: Event, row: PaymentEntry): void {
@@ -680,7 +695,7 @@ function getRateByMethod(machine: CardMachine, method: PaymentMethod, installmen
   }
 
   if (method === PAYMENT_METHODS.CREDIT_CARD) {
-    return rate.credit_base_rate + (installments - 1) * rate.credit_incremental_rate;
+    return calcCardRate(rate.credit_base_rate, rate.credit_incremental_rate, installments);
   }
 
   if (method === PAYMENT_METHODS.DEBIT_CARD) {
@@ -723,11 +738,31 @@ function getFeeCentsForRow(row: PaymentEntry): number {
   }
 
   const rate = getRateByMethod(machine, row.method, row.installments ?? 1);
-  return Math.round((amountCents * rate) / 100);
+  return applyCardFee(amountCents, rate) - amountCents;
 }
 
 function getAmountWithFeeCentsForRow(row: PaymentEntry): number {
   return parseCurrencyInputToCents(row.amountInput) + getFeeCentsForRow(row);
+}
+
+function buildPaymentsWithFees(): Array<{ method: PaymentMethod; amount_cents: number; installments?: number; applied_rate?: number }> {
+  return paymentRows.value.map((row) => {
+    const amountWithFee = getAmountWithFeeCentsForRow(row);
+    const machine = getSelectedCardMachine(row.card_machine_id);
+    const entry: { method: PaymentMethod; amount_cents: number; installments?: number; applied_rate?: number } = {
+      method: row.method,
+      amount_cents: amountWithFee,
+    };
+
+    if (row.method === PAYMENT_METHODS.CREDIT_CARD && row.installments) {
+      entry.installments = row.installments;
+      if (machine) {
+        entry.applied_rate = getRateByMethod(machine, row.method, row.installments);
+      }
+    }
+
+    return entry;
+  });
 }
 
 function handlePaymentMethodChange(row: PaymentEntry): void {
@@ -1204,8 +1239,18 @@ function decrementItemQuantity(productId: string): void {
   saleStore.updateItemQuantity(productId, item.quantity - 1);
 }
 
-function cancelSaleWithApproval(): void {
+async function cancelSaleWithApproval(): Promise<void> {
   if (saleStore.items.length === 0) {
+    return;
+  }
+
+  const ok = await confirm({
+    title: "Cancelar venda",
+    message: "Tem certeza que deseja cancelar esta venda? Todos os itens do carrinho serão removidos.",
+    confirmLabel: "Cancelar venda",
+  });
+
+  if (!ok) {
     return;
   }
 
@@ -1215,31 +1260,29 @@ function cancelSaleWithApproval(): void {
 function openProductSearchModal(): void {
   showProductSearchModal.value = true;
   productSearchInput.value = "";
+  productSearchResults.value = [];
   productSearchError.value = null;
-
-  if (allProducts.value.length > 0) {
-    return;
-  }
-
-  loadProductsForSearch();
+  loadingAllProducts.value = false;
 }
 
-async function loadProductsForSearch(): Promise<void> {
+async function searchProductsServer(query: string): Promise<void> {
   loadingAllProducts.value = true;
   productSearchError.value = null;
 
   try {
-    const response = await authenticatedFetch("/api/products");
+    const response = await authenticatedFetch(
+      `/api/products?search=${encodeURIComponent(query)}&per_page=10&page=1`,
+    );
     const data = await response.json();
 
     if (!response.ok) {
-      productSearchError.value = data.message || "Não foi possível carregar os produtos.";
+      productSearchError.value = data.message || "Não foi possível buscar produtos.";
       return;
     }
 
-    allProducts.value = data.data as Product[];
+    productSearchResults.value = data.data as Product[];
   } catch {
-    productSearchError.value = "Erro de conexão ao carregar produtos.";
+    productSearchError.value = "Erro de conexão ao buscar produtos.";
   } finally {
     loadingAllProducts.value = false;
   }
@@ -1485,44 +1528,16 @@ async function confirmPayment(): Promise<void> {
       return;
     }
 
-    const payments = paymentRows.value.map((row) => {
-      const amountWithFee = getAmountWithFeeCentsForRow(row);
-      const machine = getSelectedCardMachine(row.card_machine_id);
-      const entry: { method: PaymentMethod; amount_cents: number; installments?: number; applied_rate?: number } = {
-        method: row.method,
-        amount_cents: amountWithFee,
-      };
-
-      if (row.method === PAYMENT_METHODS.CREDIT_CARD && row.installments) {
-        entry.installments = row.installments;
-        if (machine) {
-          entry.applied_rate = getRateByMethod(machine, row.method, row.installments);
-        }
-      }
-
-      return entry;
-    });
-
-    // Normalizar: se a soma excede o total (troco em dinheiro), ajustar o valor do cash
-    const paymentSum = payments.reduce((s, p) => s + p.amount_cents, 0);
-    const excess = paymentSum - finalTotalCents;
-
-    if (excess > 0) {
-      const cashPayment = payments.find((p) => p.method === PAYMENT_METHODS.CASH);
-
-      if (cashPayment && cashPayment.amount_cents >= excess) {
-        cashPayment.amount_cents -= excess;
-      }
-    }
-
-    const payload = saleStore.buildPayload(
-      terminalId.value,
+    const payments = buildPaymentsWithFees();
+    const payload = buildSalePayload({
+      terminalId: terminalId.value,
       paymentMethod,
       operatorId,
       payments,
-      selectedCustomer.value?.id,
+      customerId: selectedCustomer.value?.id,
       finalTotalCents,
-    );
+      buildPayload: saleStore.buildPayload,
+    });
 
     const response = await authenticatedFetch("/api/sales", {
       method: "POST",
@@ -1628,6 +1643,7 @@ async function generatePixQRCode(): Promise<void> {
 
     // Iniciar contagem regressiva
     startPixQRCodeCountdown();
+    startPixStatusPolling();
   } catch {
     const message = "Erro de conexão ao gerar QR Code Pix.";
     pixQRCodeError.value = message;
@@ -1660,16 +1676,94 @@ function stopPixQRCodeCountdown(): void {
   }
 }
 
-function copyPixCodigo(): void {
+function stopPixStatusPolling(): void {
+  if (pixStatusPollingInterval) {
+    clearInterval(pixStatusPollingInterval);
+    pixStatusPollingInterval = null;
+  }
+}
+
+async function checkPixPaymentStatus(): Promise<void> {
+  if (!pixQRCodeTxId.value || paymentLoading.value || !showPixQRCodeModal.value) {
+    return;
+  }
+
+  try {
+    const response = await authenticatedFetch(
+      `/api/pix/status/${encodeURIComponent(pixQRCodeTxId.value)}`,
+    );
+    const data = await response.json();
+
+    if (!response.ok) {
+      pixStatusPollingError.value = data.message || "Falha ao consultar status do Pix.";
+      return;
+    }
+
+    const status = data.data?.status as string | undefined;
+
+    if (status === "confirmed") {
+      stopPixStatusPolling();
+      pixStatusLabel.value = "Pagamento Pix confirmado automaticamente.";
+      await confirmPixReceived("automatic");
+      return;
+    }
+
+    if (status === "expired") {
+      pixQRCodeExpired.value = true;
+      pixStatusLabel.value = "QR Code Pix expirado.";
+      stopPixStatusPolling();
+      return;
+    }
+
+    if (status === "failed") {
+      pixStatusPollingError.value = "Pagamento Pix não autorizado pelo provedor.";
+      stopPixStatusPolling();
+      return;
+    }
+
+    pixStatusLabel.value = "Aguardando confirmação do Pix...";
+    pixStatusPollingError.value = null;
+  } catch {
+    pixStatusPollingError.value = "Não foi possível atualizar o status do Pix agora.";
+  }
+}
+
+function startPixStatusPolling(): void {
+  stopPixStatusPolling();
+  pixStatusPollingError.value = null;
+  pixStatusLabel.value = "Aguardando confirmação do Pix...";
+
+  void checkPixPaymentStatus();
+
+  pixStatusPollingInterval = setInterval(() => {
+    void checkPixPaymentStatus();
+  }, 3000);
+}
+
+async function copyPixCodigo(): Promise<void> {
   if (!pixQRCodePayload.value) {
     return;
   }
 
-  navigator.clipboard.writeText(pixQRCodePayload.value);
-  // Toast de confirmação podem ser adicionados aqui se necessário
+  try {
+    await navigator.clipboard.writeText(pixQRCodePayload.value);
+    pixCopied.value = true;
+    setTimeout(() => { pixCopied.value = false; }, 2000);
+  } catch {
+    // Clipboard API não disponível — usuario pode copiar manualmente do campo
+  }
 }
 
-async function confirmPixReceived(): Promise<void> {
+function openPixManualConfirmModal(): void {
+  showPixManualConfirmModal.value = true;
+}
+
+function closePixManualConfirmModal(): void {
+  showPixManualConfirmModal.value = false;
+}
+
+async function confirmPixReceived(source: "manual" | "automatic" = "manual"): Promise<void> {
+  paymentError.value = null;
   paymentLoading.value = true;
 
   try {
@@ -1685,49 +1779,27 @@ async function confirmPixReceived(): Promise<void> {
       return;
     }
 
-    const payments = paymentRows.value.map((row) => {
-      const amountWithFee = getAmountWithFeeCentsForRow(row);
-      const machine = getSelectedCardMachine(row.card_machine_id);
-      const entry: { method: PaymentMethod; amount_cents: number; installments?: number; applied_rate?: number } = {
-        method: row.method,
-        amount_cents: amountWithFee,
-      };
-
-      if (row.method === PAYMENT_METHODS.CREDIT_CARD && row.installments) {
-        entry.installments = row.installments;
-        if (machine) {
-          entry.applied_rate = getRateByMethod(machine, row.method, row.installments);
-        }
-      }
-
-      return entry;
-    });
-
-    // Normalizar: se a soma excede o total (troco em dinheiro), ajustar o valor do cash
-    const paymentSum = payments.reduce((s, p) => s + p.amount_cents, 0);
-    const excess = paymentSum - finalTotalCents;
-
-    if (excess > 0) {
-      const cashPayment = payments.find((p) => p.method === PAYMENT_METHODS.CASH);
-
-      if (cashPayment && cashPayment.amount_cents >= excess) {
-        cashPayment.amount_cents -= excess;
-      }
-    }
-
-    const payload = saleStore.buildPayload(
-      terminalId.value,
+    const payments = buildPaymentsWithFees();
+    const payload = buildSalePayload({
+      terminalId: terminalId.value,
       paymentMethod,
       operatorId,
       payments,
-      selectedCustomer.value?.id,
+      customerId: selectedCustomer.value?.id,
       finalTotalCents,
-    );
+      buildPayload: saleStore.buildPayload,
+    });
+
+    const requestBody = {
+      ...payload,
+      pix_confirmed_manually: source === "manual",
+      pix_confirmed_automatically: source === "automatic",
+    };
 
     const response = await authenticatedFetch("/api/sales", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(requestBody),
     });
 
     const data = await response.json();
@@ -1749,6 +1821,8 @@ async function confirmPixReceived(): Promise<void> {
     });
 
     stopPixQRCodeCountdown();
+    stopPixStatusPolling();
+    showPixManualConfirmModal.value = false;
     showPixQRCodeModal.value = false;
     resetSaleState();
   } catch {
@@ -1758,12 +1832,20 @@ async function confirmPixReceived(): Promise<void> {
   }
 }
 
+function confirmPixReceivedManual(): Promise<void> {
+  return confirmPixReceived("manual");
+}
+
 function closePixQRCodeModal(): void {
+  showPixManualConfirmModal.value = false;
   showPixQRCodeModal.value = false;
   stopPixQRCodeCountdown();
+  stopPixStatusPolling();
   pixQRCodePayload.value = "";
   pixQRCodeError.value = null;
   pixQRCodeExpired.value = false;
+  pixStatusPollingError.value = null;
+  pixStatusLabel.value = "Aguardando confirmação do Pix...";
 }
 
 async function requestReceiptPrint(payload: Record<string, unknown>): Promise<void> {
@@ -1978,6 +2060,9 @@ function captureScannerInput(event: KeyboardEvent): boolean {
           v-for="toast in stockAlertToasts"
           :key="toast.id"
           class="flex min-w-[300px] items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 shadow-lg"
+          role="alert"
+          aria-live="assertive"
+          aria-atomic="true"
         >
           <span class="text-lg">⚠️</span>
           <div class="flex-1">
@@ -2028,6 +2113,10 @@ function captureScannerInput(event: KeyboardEvent): boolean {
 
         <p v-if="cashRegisterError" class="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
           {{ cashRegisterError }}
+        </p>
+
+        <p v-if="wsConnectionWarning" class="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {{ wsConnectionWarning }}
         </p>
 
         <div v-if="isCheckingCashRegister" class="rounded-xl border border-slate-200 bg-white p-6 text-slate-700">
@@ -2125,25 +2214,28 @@ function captureScannerInput(event: KeyboardEvent): boolean {
             <div class="rounded-lg border border-slate-200">
               <div class="max-h-[420px] overflow-y-auto">
                 <table class="min-w-full text-sm">
+                  <caption class="sr-only">Itens adicionados no carrinho da venda atual</caption>
                   <thead class="sticky top-0 bg-slate-100 text-left text-slate-700">
                     <tr>
-                      <th class="px-2 py-2">#</th>
-                      <th class="px-2 py-2">Código</th>
-                      <th class="px-2 py-2">Nome</th>
-                      <th class="px-2 py-2">Qtd</th>
-                      <th class="px-2 py-2">Un</th>
-                      <th class="px-2 py-2">Valor Unit.</th>
-                      <th class="px-2 py-2">Total Item</th>
-                      <th class="px-2 py-2">Ação</th>
+                      <th scope="col" class="px-2 py-2">#</th>
+                      <th scope="col" class="px-2 py-2">Código</th>
+                      <th scope="col" class="px-2 py-2">Nome</th>
+                      <th scope="col" class="px-2 py-2">Qtd</th>
+                      <th scope="col" class="px-2 py-2">Un</th>
+                      <th scope="col" class="px-2 py-2">Valor Unit.</th>
+                      <th scope="col" class="px-2 py-2">Total Item</th>
+                      <th scope="col" class="px-2 py-2">Ação</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr
                       v-for="(item, index) in saleStore.items"
                       :key="`${item.product_id}-${item.unit_price_cents}-${index}`"
-                      :class="selectedItemProductId === item.product_id ? 'bg-blue-50' : 'bg-white'"
-                      class="border-t border-slate-200"
+                      :class="selectedItemProductId === item.product_id ? 'bg-primary/5 outline-2 outline-primary/30' : ''"
+                      class="border-t border-slate-200 cursor-pointer"
+                      tabindex="0"
                       @click="selectedItemProductId = item.product_id"
+                      @keydown.enter="selectedItemProductId = item.product_id"
                     >
                       <td class="px-2 py-2">{{ index + 1 }}</td>
                       <td class="px-2 py-2">{{ item.product_barcode || "-" }}</td>
@@ -2191,6 +2283,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                       <td class="px-2 py-2">
                         <button
                           type="button"
+                          :aria-label="`Remover item ${item.product_name}`"
                           class="rounded border border-red-300 px-2 py-1 text-red-700 hover:bg-red-50"
                           @click.stop="removeItemWithApproval(item.product_id)"
                         >
@@ -2226,7 +2319,10 @@ function captureScannerInput(event: KeyboardEvent): boolean {
             <div class="mt-4 grid grid-cols-1 gap-2">
               <button
                 type="button"
-                class="h-11 rounded-md bg-blue-700 font-semibold text-white hover:bg-blue-800"
+                class="h-11 rounded-md bg-blue-700 font-semibold text-white transition"
+                :class="isConnected ? 'hover:bg-blue-800' : 'opacity-50 cursor-not-allowed'"
+                :disabled="!isConnected"
+                :title="!isConnected ? 'Sem conexão com o servidor. Aguarde a reconexão.' : ''"
                 @click="openPaymentModal"
               >
                 Finalizar venda (F4)
@@ -2270,6 +2366,32 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                 Cancelar item (F8)
               </button>
             </div>
+
+            <!-- Painel de atalhos de teclado (recolhível) -->
+            <div class="mt-4">
+              <button
+                type="button"
+                class="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-xs text-slate-500 hover:bg-slate-50"
+                :aria-expanded="showHotkeys"
+                aria-controls="hotkeys-panel"
+                @click="showHotkeys = !showHotkeys"
+              >
+                <span>⌨️ Atalhos de teclado</span>
+                <span>{{ showHotkeys ? '▲' : '▼' }}</span>
+              </button>
+              <div
+                v-if="showHotkeys"
+                id="hotkeys-panel"
+                class="mt-1 grid grid-cols-2 gap-1 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600"
+              >
+                <span>F2 — Buscar produto</span>
+                <span>F4 — Finalizar venda</span>
+                <span>F6 — Sangria</span>
+                <span>F7 — Suprimento</span>
+                <span>F8 — Cancelar item</span>
+                <span>F9 — Cancelar venda</span>
+              </div>
+            </div>
           </aside>
         </div>
 
@@ -2285,9 +2407,12 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     <div
       v-if="showOpenCashModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-open-cash-modal-title"
     >
       <div class="w-full max-w-md rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">Abertura de Caixa</h2>
+        <h2 id="sales-open-cash-modal-title" class="text-lg font-bold text-slate-900">Abertura de Caixa</h2>
         <p class="mt-1 text-sm text-slate-600">
           Informe o fundo de troco para liberar o registro de vendas.
         </p>
@@ -2322,10 +2447,13 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     <div
       v-if="showManagerPinModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-manager-pin-modal-title"
       @click.self="showManagerPinModal = false"
     >
       <div class="w-full max-w-sm rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">Aprovação de Gerente</h2>
+        <h2 id="sales-manager-pin-modal-title" class="text-lg font-bold text-slate-900">Aprovação de Gerente</h2>
         <p class="mt-1 text-sm text-slate-600">Informe o PIN para autorizar esta ação.</p>
 
         <input
@@ -2362,10 +2490,13 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     <div
       v-if="showWeightModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-weight-modal-title"
       @click.self="showWeightModal = false"
     >
       <div class="w-full max-w-lg rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">
+        <h2 id="sales-weight-modal-title" class="text-lg font-bold text-slate-900">
           {{ weightedProduct?.is_bulk ? "Produto a Granel" : "Pesagem de Produto" }}
         </h2>
 
@@ -2425,35 +2556,54 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     <div
       v-if="showProductSearchModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-product-search-modal-title"
       @click.self="showProductSearchModal = false"
     >
       <div class="w-full max-w-2xl rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">Busca de Produto (F2)</h2>
+        <h2 id="sales-product-search-modal-title" class="text-lg font-bold text-slate-900">Busca de Produto (F2)</h2>
 
         <input
           v-model="productSearchInput"
           type="text"
+          autofocus
           placeholder="Digite nome ou código"
           class="mt-3 h-11 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-blue-500"
         />
 
         <p v-if="productSearchError" class="mt-2 text-sm text-red-700">{{ productSearchError }}</p>
         <p v-if="loadingAllProducts" class="mt-2 text-sm text-slate-500">Carregando produtos...</p>
+        <p v-if="!loadingAllProducts && !productSearchError && productSearchInput.trim().length < 2" class="mt-2 text-sm text-slate-500">
+          Digite ao menos 2 caracteres para buscar.
+        </p>
+        <p v-if="!loadingAllProducts && !productSearchError && productSearchInput.trim().length >= 2 && productSearchResults.length === 0" class="mt-2 text-sm text-slate-500">
+          Nenhum produto encontrado.
+        </p>
 
-        <div class="mt-3 max-h-80 overflow-y-auto rounded-md border border-slate-200">
-          <button
-            v-for="product in productSearchResults"
-            :key="product.id"
-            type="button"
-            class="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left hover:bg-slate-50"
-            @click="selectProductFromSearch(product)"
+        <div class="mt-3 rounded-md border border-slate-200">
+          <RecycleScroller
+            :items="productSearchResults"
+            key-field="id"
+            :item-size="54"
+            class="max-h-80 overflow-y-auto"
+            list-tag="div"
+            item-tag="div"
           >
-            <span>
-              <span class="block text-sm font-medium text-slate-900">{{ product.name }}</span>
-              <span class="text-xs text-slate-500">{{ product.barcode || product.id }}</span>
-            </span>
-            <strong class="text-sm text-slate-900">{{ formatCents(product.price_cents) }}</strong>
-          </button>
+            <template #default="{ item: product }">
+              <button
+                type="button"
+                class="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left hover:bg-slate-50"
+                @click="selectProductFromSearch(toSearchProduct(product))"
+              >
+                <span>
+                  <span class="block text-sm font-medium text-slate-900">{{ toSearchProduct(product).name }}</span>
+                  <span class="text-xs text-slate-500">{{ toSearchProduct(product).barcode || toSearchProduct(product).id }}</span>
+                </span>
+                <strong class="text-sm text-slate-900">{{ formatCents(toSearchProduct(product).price_cents) }}</strong>
+              </button>
+            </template>
+          </RecycleScroller>
         </div>
       </div>
     </div>
@@ -2461,10 +2611,13 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     <div
       v-if="showPaymentModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-payment-modal-title"
       @click.self="!paymentSuccess && (showPaymentModal = false)"
     >
       <div class="w-full max-w-3xl rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">Pagamento e Finalização</h2>
+        <h2 id="sales-payment-modal-title" class="text-lg font-bold text-slate-900">Pagamento e Finalização</h2>
 
         <div v-if="paymentSuccess" class="mt-4 rounded-lg border border-green-200 bg-green-50 p-4">
           <p class="text-base font-semibold text-green-800">Venda concluída com sucesso.</p>
@@ -2695,10 +2848,13 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     <div
       v-if="showPixQRCodeModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
-      @click.self="!pixQRCodeLoading && !paymentLoading && closePixQRCodeModal()"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-pix-qrcode-modal-title"
+      @click.self="!pixQRCodeLoading && !paymentLoading && !showPixManualConfirmModal && closePixQRCodeModal()"
     >
       <div class="w-full max-w-sm rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">Confirmar Pagamento Pix</h2>
+        <h2 id="sales-pix-qrcode-modal-title" class="text-lg font-bold text-slate-900">Confirmar Pagamento Pix</h2>
 
         <div v-if="!pixQRCodeExpired" class="mt-4">
           <div class="rounded-lg border border-blue-200 bg-blue-50 p-3">
@@ -2726,10 +2882,11 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                 />
                 <button
                   type="button"
-                  class="h-11 rounded-md bg-slate-200 px-3 text-slate-700 hover:bg-slate-300"
+                  class="h-11 rounded-md px-3 transition"
+                  :class="pixCopied ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'"
                   @click="copyPixCodigo"
                 >
-                  Copiar
+                  {{ pixCopied ? '✅ Copiado!' : 'Copiar' }}
                 </button>
               </div>
             </div>
@@ -2739,11 +2896,21 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                 Validade: 
                 <strong>{{ pixQRCodeTimeoutFormatted }}</strong>
               </p>
+              <p class="mt-1 text-sm text-amber-800">
+                {{ pixStatusLabel }}
+              </p>
+              <p class="mt-2 text-sm text-amber-900">
+                ⚠️ Verifique o recebimento no aplicativo do banco antes de confirmar.
+              </p>
             </div>
           </div>
 
           <p v-if="pixQRCodeError" role="alert" class="mt-3 text-sm text-red-700">
             {{ pixQRCodeError }}
+          </p>
+
+          <p v-if="pixStatusPollingError" role="status" aria-live="polite" class="mt-2 text-sm text-amber-700">
+            {{ pixStatusPollingError }}
           </p>
 
           <div class="mt-4 flex justify-end gap-2">
@@ -2759,9 +2926,9 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               type="button"
               class="h-10 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
               :disabled="pixQRCodeLoading || paymentLoading"
-              @click="confirmPixReceived"
+              @click="openPixManualConfirmModal"
             >
-              {{ paymentLoading ? "Finalizando..." : "Pix Recebido" }}
+              Confirmar Recebimento do Pix
             </button>
           </div>
         </div>
@@ -2784,12 +2951,59 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     </div>
 
     <div
+      v-if="showPixManualConfirmModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-pix-manual-modal-title"
+      @click.self="!paymentLoading && closePixManualConfirmModal()"
+    >
+      <div class="w-full max-w-md rounded-xl bg-white p-5 shadow-lg">
+        <h2 id="sales-pix-manual-modal-title" class="text-lg font-bold text-slate-900">Confirmar Recebimento do Pix</h2>
+
+        <div class="mt-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          <p>
+            Confirme que o pagamento de <strong>{{ formatCents(pixQRCodeCents) }}</strong> foi recebido no Pix antes de finalizar a venda.
+          </p>
+          <p>
+            Chave Pix (final): <strong>{{ pixKeySuffix }}</strong>
+          </p>
+          <p class="text-amber-800">
+            ⚠️ Verifique no aplicativo do banco para evitar confirmação indevida.
+          </p>
+        </div>
+
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            class="h-10 rounded-md border border-slate-300 px-4 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            :disabled="paymentLoading"
+            @click="closePixManualConfirmModal"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            class="h-10 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
+            :disabled="paymentLoading"
+            @click="confirmPixReceivedManual"
+          >
+            {{ paymentLoading ? "Finalizando..." : "Confirmar e Finalizar" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
       v-if="showCashOutModal || showCashInModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-cash-movement-modal-title"
       @click.self="closeCashMovementModal"
     >
       <div class="w-full max-w-md rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">
+        <h2 id="sales-cash-movement-modal-title" class="text-lg font-bold text-slate-900">
           {{ showCashOutModal ? "Sangria" : "Suprimento" }}
         </h2>
 
@@ -2840,10 +3054,13 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     <div
       v-if="showCustomerListModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sales-customer-list-modal-title"
       @click.self="showCustomerListModal = false"
     >
       <div class="w-full max-w-2xl rounded-xl bg-white p-5 shadow-lg">
-        <h2 class="text-lg font-bold text-slate-900">Clientes Cadastrados</h2>
+        <h2 id="sales-customer-list-modal-title" class="text-lg font-bold text-slate-900">Clientes Cadastrados</h2>
 
         <input
           v-model="customerListFilterInput"
@@ -2894,4 +3111,13 @@ function captureScannerInput(event: KeyboardEvent): boolean {
       </div>
     </div>
   </div>
+
+  <ConfirmDialog
+    :open="showConfirm"
+    :title="confirmTitle"
+    :message="confirmMessage"
+    :confirm-label="confirmLabel"
+    @confirm="onConfirm"
+    @cancel="onCancel"
+  />
 </template>

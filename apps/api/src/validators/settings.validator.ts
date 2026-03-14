@@ -75,12 +75,28 @@ const updateGeneralSettingsSchema = z
     discount_limit_daily: z.number().int().nonnegative().optional(),
     discount_limit_weekly: z.number().int().nonnegative().optional(),
     discount_limit_monthly: z.number().int().nonnegative().optional(),
+    store_name: z.string().trim().max(120).optional(),
+    store_cnpj: z.string().trim().max(18).optional(),
+    store_address: z.string().trim().max(180).optional(),
+    store_phone: z.string().trim().max(20).optional(),
+    receipt_footer: z.string().trim().max(255).optional(),
+    fiado_max_days: z.number().int().nonnegative().max(3650).optional(),
+    fiado_allow_inactive: z.boolean().optional(),
+    fiado_blocked_message: z.string().trim().max(255).optional(),
   })
   .refine(
     (data) =>
       data.discount_limit_daily !== undefined ||
       data.discount_limit_weekly !== undefined ||
-      data.discount_limit_monthly !== undefined,
+      data.discount_limit_monthly !== undefined ||
+      data.store_name !== undefined ||
+      data.store_cnpj !== undefined ||
+      data.store_address !== undefined ||
+      data.store_phone !== undefined ||
+      data.receipt_footer !== undefined ||
+      data.fiado_max_days !== undefined ||
+      data.fiado_allow_inactive !== undefined ||
+      data.fiado_blocked_message !== undefined,
     {
       message: "Informe ao menos um limite para atualização.",
       path: ["discount_limit_daily"],

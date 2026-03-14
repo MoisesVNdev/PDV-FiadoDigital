@@ -39,13 +39,26 @@ export function useAuth() {
   }
 
   async function logout(): Promise<void> {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-    });
+    let hasRemoteFailure = false;
 
-    auth.clearAuth();
-    router.push({ name: "login" });
+    try {
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        hasRemoteFailure = true;
+      }
+    } catch {
+      hasRemoteFailure = true;
+    } finally {
+      auth.clearAuth();
+      await router.push({
+        name: "login",
+        ...(hasRemoteFailure ? { query: { logout: "failed" } } : {}),
+      });
+    }
   }
 
   async function refreshToken(): Promise<void> {
@@ -62,7 +75,9 @@ export function useAuth() {
       return;
     }
 
-    auth.accessToken = data.data.accessToken;
+    if (data.data?.accessToken && auth.user) {
+      auth.setAuth(data.data.accessToken, auth.user);
+    }
   }
 
   return { login, logout, refreshToken };

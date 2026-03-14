@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { formatCents, parseCentsFromString, type Brand, type Product, type ProductType } from "@pdv/shared";
+import { formatCents, type Brand, type Product, type ProductType } from "@pdv/shared";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
+import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import { useApi } from "@/composables/use-api.js";
+import { useConfirm } from "@/composables/use-confirm.js";
+import { useFormatting } from "@/composables/use-formatting.js";
+import { useToast } from "@/composables/use-toast.js";
 import { useAuthStore } from "@/stores/auth.store.js";
+import { useProductStore } from "@/stores/product.store.js";
 
 type TabKey = "products" | "product-types" | "prices";
 type WeightUnit = "kg" | "g" | "L" | "ml" | "un";
@@ -68,6 +73,7 @@ interface BulkPriceFormData {
 
 const { authenticatedFetch } = useApi();
 const authStore = useAuthStore();
+const productStore = useProductStore();
 
 const activeTab = ref<TabKey>("products");
 
@@ -116,6 +122,8 @@ const stockSearchError = ref<string | null>(null);
 const foundStockProduct = ref<Product | null>(null);
 const stockAdditionAmount = ref("");
 const stockAdditionType = ref<"unit" | "kg">("unit");
+const stockEntryUnitCostInput = ref("");
+const stockEntryDescription = ref("Entrada de estoque");
 const stockSubmitLoading = ref(false);
 const stockSubmitError = ref<string | null>(null);
 
@@ -151,8 +159,13 @@ const singleMarginInput = ref("");
 const singleSaleInput = ref("");
 const singlePriceLastEdited = ref<"margin" | "sale">("margin");
 
-const showToast = ref(false);
-const toastMessage = ref("");
+const { showToast, toastMessage, toastType, toast } = useToast();
+const { showConfirm, confirmTitle, confirmMessage, confirmLabel, confirm, onConfirm, onCancel } = useConfirm();
+const {
+  formatCurrencyInput,
+  parseCurrencyInputToNullableCents: parseCurrencyInputToCents,
+  formatStockQuantity,
+} = useFormatting();
 
 const isAdmin = computed(() => authStore.user?.role === "admin");
 const isStockist = computed(() => authStore.user?.role === "stockist");
@@ -175,11 +188,6 @@ const percentFormatter = new Intl.NumberFormat("pt-BR", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
-const stockFormatter = new Intl.NumberFormat("pt-BR", {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 3,
-});
-
 const selectedProductType = computed(() => {
   if (!productFormData.value.product_type_id) {
     return null;
@@ -406,33 +414,7 @@ function handleEscapeKey(event: KeyboardEvent): void {
 }
 
 function showSuccessToast(message: string): void {
-  toastMessage.value = message;
-  showToast.value = true;
-
-  setTimeout(() => {
-    showToast.value = false;
-  }, 3000);
-}
-
-function formatCurrencyInput(rawValue: string): string {
-  const digitsOnly = rawValue.replace(/\D/g, "");
-
-  if (!digitsOnly) {
-    return "";
-  }
-
-  const cents = Number.parseInt(digitsOnly, 10);
-  return formatCents(cents);
-}
-
-function parseCurrencyInputToCents(rawValue: string): number | null {
-  const digitsOnly = rawValue.replace(/\D/g, "");
-
-  if (!digitsOnly) {
-    return null;
-  }
-
-  return parseCentsFromString(rawValue);
+  toast(message);
 }
 
 function formatWeight(product: Product): string {
@@ -456,11 +438,7 @@ function formatMargin(product: Product): string {
 }
 
 function formatStock(quantity: number, isBulk: boolean): string {
-  if (isBulk) {
-    return `${stockFormatter.format(quantity)} kg`;
-  }
-
-  return `${Math.trunc(quantity)} un`;
+  return formatStockQuantity(quantity, isBulk);
 }
 
 function formatProfitMargin(value: number | null): string {
@@ -506,26 +484,29 @@ function getSortIndicator<K extends string>(sort: SortState<K>, key: K): string 
   return sort.direction === "asc" ? "↑" : "↓";
 }
 
-async function loadProducts(): Promise<void> {
+async function loadProducts(force = false): Promise<void> {
   loadingProducts.value = true;
   productsError.value = null;
 
   try {
-    const response = await authenticatedFetch("/api/products");
-    const data = await response.json();
+    await productStore.fetchIfStale(authenticatedFetch, force);
 
-    if (!response.ok) {
-      productsError.value = data.message || "Não foi possível carregar os produtos.";
+    if (productStore.error) {
+      productsError.value = productStore.error;
       return;
     }
 
-    products.value = data.data as Product[];
+    products.value = productStore.products;
   } catch (error) {
     console.error("Erro ao carregar produtos:", error);
     productsError.value = "Erro de conexão ao carregar produtos.";
   } finally {
     loadingProducts.value = false;
   }
+}
+
+function reloadProducts(): void {
+  void loadProducts(true);
 }
 
 async function loadProductTypes(): Promise<void> {
@@ -893,7 +874,8 @@ async function submitProductForm(): Promise<void> {
     }
 
     closeProductModal();
-    await loadProducts();
+    productStore.invalidate();
+    await loadProducts(true);
     showSuccessToast(
       isProductEditMode.value
         ? "Produto atualizado com sucesso!"
@@ -914,6 +896,8 @@ function openStockModal(): void {
   foundStockProduct.value = null;
   stockAdditionAmount.value = "";
   stockAdditionType.value = "unit";
+  stockEntryUnitCostInput.value = "";
+  stockEntryDescription.value = "Entrada de estoque";
   stockSubmitError.value = null;
 }
 
@@ -923,6 +907,8 @@ function closeStockModal(): void {
   stockSubmitLoading.value = false;
   stockSearchError.value = null;
   stockSubmitError.value = null;
+  stockEntryUnitCostInput.value = "";
+  stockEntryDescription.value = "Entrada de estoque";
 }
 
 function handleStockSearchBarcodeInput(event: Event): void {
@@ -933,6 +919,26 @@ function handleStockSearchBarcodeInput(event: Event): void {
 function handleStockAdditionInput(event: Event): void {
   const target = event.target as HTMLInputElement;
   stockAdditionAmount.value = target.value.replace(/\D/g, "");
+}
+
+function handleStockEntryUnitCostInput(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  stockEntryUnitCostInput.value = formatCurrencyInput(target.value);
+}
+
+async function reloadProductById(productId: string): Promise<void> {
+  const response = await authenticatedFetch(`/api/products/${productId}`);
+
+  if (!response.ok) {
+    throw new Error("Não foi possível recarregar o produto atualizado.");
+  }
+
+  const data = await response.json();
+  const updatedProduct = data.data as Product;
+  products.value = products.value.map((item) =>
+    item.id === updatedProduct.id ? updatedProduct : item,
+  );
+  foundStockProduct.value = updatedProduct;
 }
 
 async function searchProductByBarcode(): Promise<void> {
@@ -985,31 +991,48 @@ async function submitStockEntry(): Promise<void> {
     return;
   }
 
+  const unitCostCents = parseCurrencyInputToCents(stockEntryUnitCostInput.value);
+
+  if (unitCostCents === null || unitCostCents < 0) {
+    stockSubmitError.value = "Informe um custo unitário válido.";
+    return;
+  }
+
+  const description = stockEntryDescription.value.trim();
+
+  if (description.length < 3) {
+    stockSubmitError.value = "Informe uma descrição com ao menos 3 caracteres.";
+    return;
+  }
+
   stockSubmitLoading.value = true;
 
   try {
-    const response = await authenticatedFetch(`/api/products/${foundStockProduct.value.id}`, {
-      method: "PUT",
+    const response = await authenticatedFetch("/api/stock-movements/adjustment", {
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        stock_quantity: updatedStockQuantity.value,
+        product_id: foundStockProduct.value.id,
+        quantity: normalizedStockAddition.value,
+        unit_cost_cents: unitCostCents,
+        description,
       }),
     });
     const data = await response.json();
 
     if (!response.ok) {
-      stockSubmitError.value = data.message || "Não foi possível atualizar o estoque.";
+      stockSubmitError.value = data.message || "Não foi possível registrar a movimentação de estoque.";
       return;
     }
 
+    await reloadProductById(foundStockProduct.value.id);
     closeStockModal();
-    await loadProducts();
-    showSuccessToast("Estoque atualizado com sucesso!");
+    showSuccessToast("Entrada de estoque registrada com sucesso!");
   } catch (error) {
-    console.error("Erro ao atualizar estoque:", error);
-    stockSubmitError.value = "Erro de conexão ao atualizar estoque.";
+    console.error("Erro ao registrar movimentação de estoque:", error);
+    stockSubmitError.value = "Erro de conexão ao registrar movimentação de estoque.";
   } finally {
     stockSubmitLoading.value = false;
   }
@@ -1131,6 +1154,17 @@ async function submitProductTypeForm(): Promise<void> {
 }
 
 async function deactivateProductType(productTypeId: string): Promise<void> {
+  const typeName = productTypes.value.find((t) => t.id === productTypeId)?.name ?? "este tipo";
+  const ok = await confirm({
+    title: "Desativar tipo de produto",
+    message: `Tem certeza que deseja desativar "${typeName}"?`,
+    confirmLabel: "Desativar",
+  });
+
+  if (!ok) {
+    return;
+  }
+
   try {
     const response = await authenticatedFetch(`/api/product-types/${productTypeId}`, {
       method: "DELETE",
@@ -1239,7 +1273,8 @@ async function submitBulkPrice(): Promise<void> {
     }
 
     closeBulkPriceModal();
-    await loadProducts();
+    productStore.invalidate();
+    await loadProducts(true);
     showSuccessToast(`Preços atualizados em ${(data.data?.updated_count as number) ?? 0} produtos.`);
   } catch (error) {
     console.error("Erro ao atualizar preços em lote:", error);
@@ -1377,7 +1412,8 @@ async function submitSinglePrice(): Promise<void> {
     }
 
     closeSinglePriceModal();
-    await loadProducts();
+    productStore.invalidate();
+    await loadProducts(true);
     showSuccessToast("Preço do produto atualizado com sucesso!");
   } catch (error) {
     console.error("Erro ao salvar preço individual:", error);
@@ -1470,7 +1506,7 @@ async function submitSinglePrice(): Promise<void> {
             <button
               type="button"
               class="mt-3 rounded bg-primary px-3 py-1.5 text-white transition hover:bg-primary-dark"
-              @click="loadProducts"
+              @click="reloadProducts"
             >
               Tentar novamente
             </button>
@@ -1485,41 +1521,42 @@ async function submitSinglePrice(): Promise<void> {
 
           <div v-else class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
             <table class="w-full min-w-[1180px]">
+              <caption class="sr-only">Lista de produtos cadastrados</caption>
               <thead class="bg-gray-50">
                 <tr>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Código de Barras</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Código de Barras</th>
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('name')">
                       Nome
                       <span>{{ getSortIndicator(productSort, 'name') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('brand')">
                       Marca
                       <span>{{ getSortIndicator(productSort, 'brand') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Gramagem</th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Gramagem</th>
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('type')">
                       Tipo
                       <span>{{ getSortIndicator(productSort, 'type') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('price')">
                       Preço
                       <span>{{ getSortIndicator(productSort, 'price') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="toggleProductSort('stock')">
                       Estoque
                       <span>{{ getSortIndicator(productSort, 'stock') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
+                  <th scope="col" class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
@@ -1595,15 +1632,16 @@ async function submitSinglePrice(): Promise<void> {
 
           <div v-else class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
             <table class="w-full min-w-[640px]">
+              <caption class="sr-only">Lista de tipos de produto cadastrados</caption>
               <thead class="bg-gray-50">
                 <tr>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="toggleProductTypeSort('name')">
                       Nome
                       <span>{{ getSortIndicator(productTypeSort, 'name') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button
                       type="button"
                       class="inline-flex items-center gap-1"
@@ -1613,7 +1651,7 @@ async function submitSinglePrice(): Promise<void> {
                       <span>{{ getSortIndicator(productTypeSort, 'profit_margin') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
+                  <th scope="col" class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
@@ -1663,51 +1701,52 @@ async function submitSinglePrice(): Promise<void> {
 
           <div v-else class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
             <table class="w-full min-w-[1120px]">
+              <caption class="sr-only">Tabela de precos e margens dos produtos</caption>
               <thead class="bg-gray-50">
                 <tr>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('name')">
                       Nome
                       <span>{{ getSortIndicator(priceSort, 'name') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('type')">
                       Tipo
                       <span>{{ getSortIndicator(priceSort, 'type') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('brand')">
                       Marca
                       <span>{{ getSortIndicator(priceSort, 'brand') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('cost')">
                       Custo
                       <span>{{ getSortIndicator(priceSort, 'cost') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('margin')">
                       Margem %
                       <span>{{ getSortIndicator(priceSort, 'margin') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('sale')">
                       Preço de Venda
                       <span>{{ getSortIndicator(priceSort, 'sale') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                     <button type="button" class="inline-flex items-center gap-1" @click="togglePriceSort('stock')">
                       Estoque
                       <span>{{ getSortIndicator(priceSort, 'stock') }}</span>
                     </button>
                   </th>
-                  <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
+                  <th scope="col" class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
@@ -1747,11 +1786,14 @@ async function submitSinglePrice(): Promise<void> {
         <div
           v-if="showProductModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="product-form-modal-title"
           @click.self="closeProductModal"
         >
           <div class="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">
+              <h2 id="product-form-modal-title" class="text-xl font-bold text-gray-900">
                 {{ isProductEditMode ? "Editar Produto" : "Novo Produto" }}
               </h2>
               <button
@@ -1788,6 +1830,7 @@ async function submitSinglePrice(): Promise<void> {
                   id="product_name"
                   v-model="productFormData.name"
                   type="text"
+                  autofocus
                   maxlength="100"
                   class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
@@ -1809,6 +1852,7 @@ async function submitSinglePrice(): Promise<void> {
                   </select>
                   <button
                     type="button"
+                    aria-label="Cadastrar nova marca"
                     class="rounded border border-primary px-3 py-2 text-sm font-semibold text-primary transition hover:bg-primary/10"
                     @click="openInlineBrandCreate"
                   >
@@ -2028,11 +2072,14 @@ async function submitSinglePrice(): Promise<void> {
         <div
           v-if="showStockModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="product-stock-modal-title"
           @click.self="closeStockModal"
         >
           <div class="w-full max-w-xl rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">Entrada de Estoque</h2>
+              <h2 id="product-stock-modal-title" class="text-xl font-bold text-gray-900">Entrada de Estoque</h2>
               <button
                 type="button"
                 class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
@@ -2063,6 +2110,7 @@ async function submitSinglePrice(): Promise<void> {
                       id="stock_barcode"
                       :value="stockSearchBarcode"
                       type="text"
+                      autofocus
                       maxlength="13"
                       inputmode="numeric"
                       placeholder="Digite ou escaneie"
@@ -2134,6 +2182,36 @@ async function submitSinglePrice(): Promise<void> {
                   </div>
                 </div>
 
+                <div class="mt-3 grid grid-cols-1 gap-3">
+                  <div>
+                    <label for="stock_entry_unit_cost" class="mb-1 block text-sm font-medium text-gray-700">
+                      Custo unitário da entrada
+                    </label>
+                    <input
+                      id="stock_entry_unit_cost"
+                      :value="stockEntryUnitCostInput"
+                      type="text"
+                      inputmode="numeric"
+                      placeholder="R$ 0,00"
+                      class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      @input="handleStockEntryUnitCostInput"
+                    />
+                  </div>
+
+                  <div>
+                    <label for="stock_entry_description" class="mb-1 block text-sm font-medium text-gray-700">
+                      Descrição da movimentação
+                    </label>
+                    <input
+                      id="stock_entry_description"
+                      v-model="stockEntryDescription"
+                      type="text"
+                      maxlength="255"
+                      class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                </div>
+
                 <p class="mt-3 text-sm text-gray-700">
                   Quantidade atualizada:
                   <span class="font-semibold text-primary">{{ updatedStockQuantity }}</span>
@@ -2178,11 +2256,14 @@ async function submitSinglePrice(): Promise<void> {
         <div
           v-if="showProductTypeModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="product-type-modal-title"
           @click.self="closeProductTypeModal"
         >
           <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">
+              <h2 id="product-type-modal-title" class="text-xl font-bold text-gray-900">
                 {{ isProductTypeEditMode ? "Editar Tipo de Produto" : "Novo Tipo de Produto" }}
               </h2>
               <button
@@ -2219,6 +2300,7 @@ async function submitSinglePrice(): Promise<void> {
                   id="product_type_name"
                   v-model="productTypeName"
                   type="text"
+                  autofocus
                   maxlength="50"
                   class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
@@ -2276,11 +2358,14 @@ async function submitSinglePrice(): Promise<void> {
         <div
           v-if="showBulkPriceModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="product-bulk-price-modal-title"
           @click.self="closeBulkPriceModal"
         >
           <div class="w-full max-w-xl rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">Definir Margem de Lucro</h2>
+              <h2 id="product-bulk-price-modal-title" class="text-xl font-bold text-gray-900">Definir Margem de Lucro</h2>
               <button
                 type="button"
                 class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
@@ -2306,6 +2391,7 @@ async function submitSinglePrice(): Promise<void> {
                 <select
                   id="bulk_product_type"
                   v-model="bulkPriceFormData.product_type_id"
+                  autofocus
                   class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="">Selecione</option>
@@ -2402,11 +2488,14 @@ async function submitSinglePrice(): Promise<void> {
         <div
           v-if="showSinglePriceModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="product-single-price-modal-title"
           @click.self="closeSinglePriceModal"
         >
           <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">Editar Preço</h2>
+              <h2 id="product-single-price-modal-title" class="text-xl font-bold text-gray-900">Editar Preço</h2>
               <button
                 type="button"
                 class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
@@ -2500,12 +2589,26 @@ async function submitSinglePrice(): Promise<void> {
 
         <div
           v-if="showToast"
-          class="fixed bottom-4 right-4 z-50 rounded-lg bg-success px-6 py-3 text-white shadow-lg"
-          role="alert"
+          :role="toastType === 'error' ? 'alert' : 'status'"
+          :aria-live="toastType === 'error' ? 'assertive' : 'polite'"
+          aria-atomic="true"
+          :class="[
+            'fixed bottom-4 right-4 z-50 rounded-lg px-6 py-3 text-white shadow-lg',
+            toastType === 'error' ? 'bg-danger' : toastType === 'warning' ? 'bg-warning' : 'bg-success',
+          ]"
         >
           {{ toastMessage }}
         </div>
       </main>
     </div>
   </div>
+
+  <ConfirmDialog
+    :open="showConfirm"
+    :title="confirmTitle"
+    :message="confirmMessage"
+    :confirm-label="confirmLabel"
+    @confirm="onConfirm"
+    @cancel="onCancel"
+  />
 </template>

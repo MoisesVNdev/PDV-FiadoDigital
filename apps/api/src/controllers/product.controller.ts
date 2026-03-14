@@ -1,15 +1,43 @@
 import type { Request, Response, NextFunction } from "express";
 import { ProductService } from "../services/product.service.js";
+import type { ProductQueryParams } from "@pdv/shared";
 
 const productService = new ProductService();
+
+function parsePositiveQueryNumber(rawValue: unknown): number | undefined {
+  if (typeof rawValue === "number") {
+    if (!Number.isFinite(rawValue) || rawValue <= 0) {
+      return undefined;
+    }
+
+    return Math.trunc(rawValue);
+  }
+
+  if (typeof rawValue !== "string") {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return parsed;
+}
 
 export class ProductController {
   async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const barcode =
-        typeof req.query.barcode === "string" ? req.query.barcode.trim() : undefined;
-      const products = await productService.list(barcode || undefined);
-      res.json({ success: true, data: products });
+      const query: ProductQueryParams = {
+        barcode: typeof req.query.barcode === "string" ? req.query.barcode.trim() : undefined,
+        search: typeof req.query.search === "string" ? req.query.search.trim() : undefined,
+        page: parsePositiveQueryNumber(req.query.page) ?? 1,
+        per_page: parsePositiveQueryNumber(req.query.per_page) ?? 20,
+      };
+
+      const result = await productService.list(query);
+      res.json({ success: true, data: result.data, pagination: result.pagination });
     } catch (error) {
       next(error);
     }

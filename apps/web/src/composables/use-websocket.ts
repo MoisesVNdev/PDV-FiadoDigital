@@ -7,17 +7,57 @@ type WsMessage = {
 };
 
 export function useWebSocket() {
+  const MAX_RETRIES = 10;
+  const BASE_DELAY_MS = 1000;
+  const MAX_DELAY_MS = 30000;
+
   const authStore = useAuthStore();
-  const isConnected = ref(false);
-  const lastMessage = ref<WsMessage | null>(null);
-  let socket: WebSocket | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  if (!(globalThis as Record<string, unknown>).__pdvWsState) {
+    (globalThis as Record<string, unknown>).__pdvWsState = {
+      isConnected: ref(false),
+      isOnline: ref(false),
+      connectionWarning: ref<string | null>(null),
+      lastMessage: ref<WsMessage | null>(null),
+      socket: null as WebSocket | null,
+      retryTimeout: null as ReturnType<typeof setTimeout> | null,
+      retryCount: 0,
+      shouldReconnect: true,
+      subscribers: 0,
+    };
+  }
+
+  const sharedState = (globalThis as Record<string, unknown>).__pdvWsState as {
+    isConnected: ReturnType<typeof ref<boolean>>;
+    isOnline: ReturnType<typeof ref<boolean>>;
+    connectionWarning: ReturnType<typeof ref<string | null>>;
+    lastMessage: ReturnType<typeof ref<WsMessage | null>>;
+    socket: WebSocket | null;
+    retryTimeout: ReturnType<typeof setTimeout> | null;
+    retryCount: number;
+    shouldReconnect: boolean;
+    subscribers: number;
+  };
+
+  function clearRetryTimeout(): void {
+    if (!sharedState.retryTimeout) {
+      return;
+    }
+
+    clearTimeout(sharedState.retryTimeout);
+    sharedState.retryTimeout = null;
+  }
 
   function connect(): void {
+    if (!sharedState.shouldReconnect) {
+      return;
+    }
+
     const token = authStore.accessToken;
 
     if (!token) {
-      isConnected.value = false;
+      sharedState.isConnected.value = false;
+      sharedState.isOnline.value = false;
       scheduleReconnect();
       return;
     }
@@ -25,50 +65,89 @@ export function useWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
 
-    socket = new WebSocket(url);
+    sharedState.socket = new WebSocket(url);
 
-    socket.onopen = () => {
-      isConnected.value = true;
+    sharedState.socket.onopen = () => {
+      sharedState.isConnected.value = true;
+      sharedState.isOnline.value = true;
+      sharedState.connectionWarning.value = null;
+      sharedState.retryCount = 0;
+      clearRetryTimeout();
     };
 
-    socket.onmessage = (event: MessageEvent) => {
+    sharedState.socket.onmessage = (event: MessageEvent) => {
       try {
-        lastMessage.value = JSON.parse(event.data as string) as WsMessage;
+        sharedState.lastMessage.value = JSON.parse(event.data as string) as WsMessage;
       } catch {
         // Ignora mensagens mal formatadas
       }
     };
 
-    socket.onclose = () => {
-      isConnected.value = false;
+    sharedState.socket.onclose = () => {
+      sharedState.isConnected.value = false;
+      sharedState.isOnline.value = false;
       scheduleReconnect();
     };
 
-    socket.onerror = () => {
-      socket?.close();
+    sharedState.socket.onerror = () => {
+      sharedState.isOnline.value = false;
+      sharedState.socket?.close();
     };
   }
 
   function scheduleReconnect(): void {
-    if (reconnectTimer) return;
+    if (!sharedState.shouldReconnect || sharedState.retryTimeout) {
+      return;
+    }
 
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
+    if (sharedState.retryCount >= MAX_RETRIES) {
+      sharedState.connectionWarning.value = "Conexão com o servidor perdida. Verifique a rede.";
+      sharedState.isOnline.value = false;
+      return;
+    }
+
+    const exponentialDelay = Math.min(BASE_DELAY_MS * (2 ** sharedState.retryCount), MAX_DELAY_MS);
+    const jitter = Math.floor(Math.random() * 1000);
+    const retryDelay = exponentialDelay + jitter;
+
+    sharedState.retryCount += 1;
+
+    sharedState.retryTimeout = setTimeout(() => {
+      sharedState.retryTimeout = null;
       connect();
-    }, 3000);
+    }, retryDelay);
   }
 
   function disconnect(): void {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    socket?.close();
-    socket = null;
+    sharedState.shouldReconnect = false;
+    clearRetryTimeout();
+    sharedState.retryCount = 0;
+    sharedState.socket?.close();
+    sharedState.socket = null;
+    sharedState.isConnected.value = false;
+    sharedState.isOnline.value = false;
   }
 
-  onMounted(connect);
-  onUnmounted(disconnect);
+  onMounted(() => {
+    sharedState.subscribers += 1;
+    sharedState.shouldReconnect = true;
+    connect();
+  });
 
-  return { isConnected, lastMessage };
+  onUnmounted(() => {
+    sharedState.subscribers = Math.max(0, sharedState.subscribers - 1);
+
+    if (sharedState.subscribers > 0) {
+      return;
+    }
+
+    disconnect();
+  });
+
+  return {
+    isConnected: sharedState.isConnected,
+    isOnline: sharedState.isOnline,
+    connectionWarning: sharedState.connectionWarning,
+    lastMessage: sharedState.lastMessage,
+  };
 }

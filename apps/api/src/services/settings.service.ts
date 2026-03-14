@@ -12,6 +12,14 @@ const PIX_MERCHANT_CITY_SETTING = "pix.merchant_city";
 const DISCOUNT_LIMIT_DAILY_SETTING = "discount_limit_daily";
 const DISCOUNT_LIMIT_WEEKLY_SETTING = "discount_limit_weekly";
 const DISCOUNT_LIMIT_MONTHLY_SETTING = "discount_limit_monthly";
+const STORE_NAME_SETTING = "store_name";
+const STORE_CNPJ_SETTING = "store_cnpj";
+const STORE_ADDRESS_SETTING = "store_address";
+const STORE_PHONE_SETTING = "store_phone";
+const RECEIPT_FOOTER_SETTING = "receipt_footer";
+const FIADO_MAX_DAYS_SETTING = "fiado_max_days";
+const FIADO_ALLOW_INACTIVE_SETTING = "fiado_allow_inactive";
+const FIADO_BLOCKED_MESSAGE_SETTING = "fiado_blocked_message";
 
 export class SettingsService {
   private settingsRepository: SettingsRepository;
@@ -92,11 +100,27 @@ export class SettingsService {
     discount_limit_daily: number;
     discount_limit_weekly: number;
     discount_limit_monthly: number;
+    store_name: string;
+    store_cnpj: string;
+    store_address: string;
+    store_phone: string;
+    receipt_footer: string;
+    fiado_max_days: number;
+    fiado_allow_inactive: boolean;
+    fiado_blocked_message: string;
   }> {
     const keys = [
       DISCOUNT_LIMIT_DAILY_SETTING,
       DISCOUNT_LIMIT_WEEKLY_SETTING,
       DISCOUNT_LIMIT_MONTHLY_SETTING,
+      STORE_NAME_SETTING,
+      STORE_CNPJ_SETTING,
+      STORE_ADDRESS_SETTING,
+      STORE_PHONE_SETTING,
+      RECEIPT_FOOTER_SETTING,
+      FIADO_MAX_DAYS_SETTING,
+      FIADO_ALLOW_INACTIVE_SETTING,
+      FIADO_BLOCKED_MESSAGE_SETTING,
     ];
 
     const settings = await this.settingsRepository.findMany(keys);
@@ -106,6 +130,14 @@ export class SettingsService {
       discount_limit_daily: Number.parseInt(map.get(DISCOUNT_LIMIT_DAILY_SETTING) ?? "0", 10) || 0,
       discount_limit_weekly: Number.parseInt(map.get(DISCOUNT_LIMIT_WEEKLY_SETTING) ?? "0", 10) || 0,
       discount_limit_monthly: Number.parseInt(map.get(DISCOUNT_LIMIT_MONTHLY_SETTING) ?? "0", 10) || 0,
+      store_name: map.get(STORE_NAME_SETTING) ?? "",
+      store_cnpj: map.get(STORE_CNPJ_SETTING) ?? "",
+      store_address: map.get(STORE_ADDRESS_SETTING) ?? "",
+      store_phone: map.get(STORE_PHONE_SETTING) ?? "",
+      receipt_footer: map.get(RECEIPT_FOOTER_SETTING) ?? "",
+      fiado_max_days: Number.parseInt(map.get(FIADO_MAX_DAYS_SETTING) ?? "0", 10) || 0,
+      fiado_allow_inactive: map.get(FIADO_ALLOW_INACTIVE_SETTING) === "true",
+      fiado_blocked_message: map.get(FIADO_BLOCKED_MESSAGE_SETTING) ?? "",
     };
   }
 
@@ -113,6 +145,14 @@ export class SettingsService {
     discount_limit_daily?: number;
     discount_limit_weekly?: number;
     discount_limit_monthly?: number;
+    store_name?: string;
+    store_cnpj?: string;
+    store_address?: string;
+    store_phone?: string;
+    receipt_footer?: string;
+    fiado_max_days?: number;
+    fiado_allow_inactive?: boolean;
+    fiado_blocked_message?: string;
   }) {
     const operations: Promise<unknown>[] = [];
 
@@ -141,6 +181,40 @@ export class SettingsService {
           String(data.discount_limit_monthly),
         ),
       );
+    }
+
+    if (data.store_name !== undefined) {
+      operations.push(this.settingsRepository.upsert(STORE_NAME_SETTING, data.store_name));
+    }
+
+    if (data.store_cnpj !== undefined) {
+      operations.push(this.settingsRepository.upsert(STORE_CNPJ_SETTING, data.store_cnpj));
+    }
+
+    if (data.store_address !== undefined) {
+      operations.push(this.settingsRepository.upsert(STORE_ADDRESS_SETTING, data.store_address));
+    }
+
+    if (data.store_phone !== undefined) {
+      operations.push(this.settingsRepository.upsert(STORE_PHONE_SETTING, data.store_phone));
+    }
+
+    if (data.receipt_footer !== undefined) {
+      operations.push(this.settingsRepository.upsert(RECEIPT_FOOTER_SETTING, data.receipt_footer));
+    }
+
+    if (data.fiado_max_days !== undefined) {
+      operations.push(this.settingsRepository.upsert(FIADO_MAX_DAYS_SETTING, String(data.fiado_max_days)));
+    }
+
+    if (data.fiado_allow_inactive !== undefined) {
+      operations.push(
+        this.settingsRepository.upsert(FIADO_ALLOW_INACTIVE_SETTING, String(data.fiado_allow_inactive)),
+      );
+    }
+
+    if (data.fiado_blocked_message !== undefined) {
+      operations.push(this.settingsRepository.upsert(FIADO_BLOCKED_MESSAGE_SETTING, data.fiado_blocked_message));
     }
 
     await Promise.all(operations);

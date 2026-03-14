@@ -1,48 +1,139 @@
 import { prisma } from "../config/database.js";
-import type { CreateProductPayload, UpdateProductPayload } from "@pdv/shared";
+import type {
+  CreateProductPayload,
+  PaginatedResult,
+  Product,
+  ProductQueryParams,
+  ProductWeightUnit,
+  UpdateProductPayload,
+} from "@pdv/shared";
 import type { Prisma } from "@prisma/client";
 
+const DEFAULT_PER_PAGE = 20;
+const MAX_PER_PAGE = 100;
+
+function toProduct(product: {
+  id: string;
+  name: string;
+  barcode: string | null;
+  brand_id: string | null;
+  brand: { id: string; name: string; created_at: Date; updated_at: Date } | null;
+  description: string | null;
+  weight_value: number | null;
+  weight_unit: string | null;
+  product_type_id: string | null;
+  product_type: { id: string; name: string; profit_margin: number | null; created_at: Date; updated_at: Date } | null;
+  profit_margin: number | null;
+  price_cents: number;
+  cost_price_cents: number;
+  average_cost_cents: number;
+  stock_quantity: number;
+  min_stock_alert: number;
+  is_bulk: boolean;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}): Product {
+  return {
+    ...product,
+    weight_unit: product.weight_unit as ProductWeightUnit | null,
+    brand: product.brand
+      ? {
+          ...product.brand,
+          created_at: product.brand.created_at.toISOString(),
+          updated_at: product.brand.updated_at.toISOString(),
+        }
+      : null,
+    product_type: product.product_type
+      ? {
+          ...product.product_type,
+          created_at: product.product_type.created_at.toISOString(),
+          updated_at: product.product_type.updated_at.toISOString(),
+        }
+      : null,
+    created_at: product.created_at.toISOString(),
+    updated_at: product.updated_at.toISOString(),
+  };
+}
+
 export class ProductRepository {
-  async findAll(barcode?: string) {
-    return prisma.product.findMany({
-      where: {
-        deleted_at: null,
-        ...(barcode ? { barcode } : {}),
-        AND: [
-          {
+  async findAll(params: ProductQueryParams): Promise<PaginatedResult<Product>> {
+    const {
+      barcode,
+      search,
+      page = 1,
+      per_page = DEFAULT_PER_PAGE,
+    } = params;
+
+    const normalizedSearch = search?.trim();
+    const validPerPage = Math.min(Math.max(per_page || DEFAULT_PER_PAGE, 1), MAX_PER_PAGE);
+    const validPage = Math.max(page || 1, 1);
+
+    const where: Prisma.ProductWhereInput = {
+      deleted_at: null,
+      ...(barcode ? { barcode } : {}),
+      ...(normalizedSearch
+        ? {
             OR: [
-              { product_type_id: null },
-              { product_type: { is: { deleted_at: null } } },
+              { name: { contains: normalizedSearch } },
+              { barcode: { contains: normalizedSearch } },
             ],
+          }
+        : {}),
+      AND: [
+        {
+          OR: [
+            { product_type_id: null },
+            { product_type: { is: { deleted_at: null } } },
+          ],
+        },
+        {
+          OR: [
+            { brand_id: null },
+            { brand: { is: { deleted_at: null } } },
+          ],
+        },
+      ],
+    };
+
+    const [total, data] = await Promise.all([
+      prisma.product.count({ where }),
+      prisma.product.findMany({
+        where,
+        skip: (validPage - 1) * validPerPage,
+        take: validPerPage,
+        orderBy: { name: "asc" },
+        include: {
+          brand: {
+            select: {
+              id: true,
+              name: true,
+              created_at: true,
+              updated_at: true,
+            },
           },
-          {
-            OR: [
-              { brand_id: null },
-              { brand: { is: { deleted_at: null } } },
-            ],
-          },
-        ],
-      },
-      include: {
-        brand: {
-          select: {
-            id: true,
-            name: true,
-            created_at: true,
-            updated_at: true,
+          product_type: {
+            select: {
+              id: true,
+              name: true,
+              profit_margin: true,
+              created_at: true,
+              updated_at: true,
+            },
           },
         },
-        product_type: {
-          select: {
-            id: true,
-            name: true,
-            profit_margin: true,
-            created_at: true,
-            updated_at: true,
-          },
-        },
+      }),
+    ]);
+
+    return {
+      data: data.map(toProduct),
+      pagination: {
+        page: validPage,
+        per_page: validPerPage,
+        total,
+        total_pages: Math.ceil(total / validPerPage),
       },
-    });
+    };
   }
 
   async findById(id: string) {

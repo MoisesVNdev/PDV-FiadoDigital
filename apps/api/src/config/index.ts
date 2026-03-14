@@ -14,5 +14,6 @@ export const config = {
     key: (process.env.PIX_KEY || "") as string,
     merchantName: (process.env.PIX_MERCHANT_NAME || "") as string,
     merchantCity: (process.env.PIX_MERCHANT_CITY || "") as string,
+    webhookSecret: (process.env.PIX_WEBHOOK_SECRET || "") as string,
   },
 } as const;

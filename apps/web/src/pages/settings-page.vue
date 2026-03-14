@@ -3,7 +3,11 @@ import type { CardMachine } from "@pdv/shared";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
+import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import { useApi } from "@/composables/use-api.js";
+import { useConfirm } from "@/composables/use-confirm.js";
+import { useFormatting } from "@/composables/use-formatting.js";
+import { useToast } from "@/composables/use-toast.js";
 import { useAuthStore } from "@/stores/auth.store.js";
 
 type PixKeyType = "cpf" | "cnpj" | "email" | "phone" | "random";
@@ -51,6 +55,20 @@ interface FormErrors {
   submit?: string;
 }
 
+interface GeneralSettingsResponse {
+  discount_limit_daily: number;
+  discount_limit_weekly: number;
+  discount_limit_monthly: number;
+  store_name: string;
+  store_cnpj: string;
+  store_address: string;
+  store_phone: string;
+  receipt_footer: string;
+  fiado_max_days: number;
+  fiado_allow_inactive: boolean;
+  fiado_blocked_message: string;
+}
+
 const { authenticatedFetch } = useApi();
 const authStore = useAuthStore();
 const activeMainTab = ref<MainTabKey>("settings");
@@ -75,13 +93,37 @@ const formData = ref<FormData>({
 });
 const formErrors = ref<FormErrors>({});
 
+const generalSettingsLoading = ref(false);
+const generalSettingsSaving = ref(false);
+const generalSettingsError = ref<string | null>(null);
+const systemSubmitError = ref<string | null>(null);
+const fiadoSubmitError = ref<string | null>(null);
+
+const systemForm = ref({
+  store_name: "",
+  store_cnpj: "",
+  store_address: "",
+  store_phone: "",
+  receipt_footer: "",
+  discount_limit_daily: "",
+  discount_limit_weekly: "",
+  discount_limit_monthly: "",
+});
+
+const fiadoForm = ref({
+  fiado_max_days: "",
+  fiado_allow_inactive: false,
+  fiado_blocked_message: "",
+});
+
 const showPasswordModal = ref(false);
 const confirmationPassword = ref("");
 const passwordErrors = ref<string[]>([]);
 const modalError = ref<string | null>(null);
 
-const showToast = ref(false);
-const toastMessage = ref("");
+const { showToast, toastMessage, toastType, toast } = useToast();
+const { showConfirm, confirmTitle, confirmMessage, confirmLabel, confirm, onConfirm, onCancel } = useConfirm();
+const { formatPhoneForInput, parseCurrencyInputToCents } = useFormatting();
 
 const cardMachines = ref<CardMachine[]>([]);
 const loadingCardMachines = ref(false);
@@ -102,10 +144,6 @@ const cardMachineFormData = ref<CardMachineFormData>({
 });
 const cardMachineFormErrors = ref<CardMachineFormErrors>({});
 const cardMachineSubmitLoading = ref(false);
-
-const showDeleteConfirmModal = ref(false);
-const pendingDeleteMachineId = ref<string | null>(null);
-const pendingDeleteMachineName = ref("");
 
 const currentAdminName = computed(() => authStore.user?.name?.trim() || "Administrador");
 
@@ -183,6 +221,7 @@ const pixKeyStorageHint = computed(() => {
 });
 
 onMounted(async () => {
+  await loadGeneralSettings();
   await loadPixSettings();
   await loadCardMachines();
   window.addEventListener("keydown", handleEscapeKey);
@@ -197,8 +236,8 @@ function handleEscapeKey(event: KeyboardEvent): void {
     return;
   }
 
-  if (showDeleteConfirmModal.value) {
-    closeDeleteConfirmModal();
+  if (showConfirm.value) {
+    onCancel();
     return;
   }
 
@@ -256,33 +295,6 @@ function formatCnpjForInput(value: string): string {
   }
 
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
-}
-
-function formatPhoneForInput(value: string): string {
-  const digits = normalizeDigits(value).slice(0, 11);
-
-  if (!digits) {
-    return "";
-  }
-
-  if (digits.length < 3) {
-    return `(${digits}`;
-  }
-
-  const areaCode = digits.slice(0, 2);
-  const firstDigit = digits.slice(2, 3);
-  const middle = digits.slice(3, 7);
-  const ending = digits.slice(7, 11);
-
-  if (!middle) {
-    return `(${areaCode}) ${firstDigit}`;
-  }
-
-  if (!ending) {
-    return `(${areaCode}) ${firstDigit} ${middle}`;
-  }
-
-  return `(${areaCode}) ${firstDigit} ${middle}-${ending}`;
 }
 
 function formatStoredPixKeyForDisplay(type: PixKeyType | "", value: string): string {
@@ -415,6 +427,160 @@ function validatePixKey(type: PixKeyType | "", rawValue: string): string[] | und
   }
 
   return undefined;
+}
+
+function handleStoreCnpjInput(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  systemForm.value.store_cnpj = formatCnpjForInput(target.value);
+}
+
+function handleStorePhoneInput(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  systemForm.value.store_phone = formatPhoneForInput(target.value);
+}
+
+function handleDiscountLimitInput(
+  event: Event,
+  field: "discount_limit_daily" | "discount_limit_weekly" | "discount_limit_monthly",
+): void {
+  const target = event.target as HTMLInputElement;
+  systemForm.value[field] = toCurrencyMaskedValue(target.value);
+}
+
+function handleFiadoMaxDaysInput(event: Event): void {
+  const target = event.target as HTMLInputElement;
+  fiadoForm.value.fiado_max_days = target.value.replace(/\D/g, "");
+}
+
+function toCurrencyMaskedValue(rawValue: string): string {
+  const digits = rawValue.replace(/\D/g, "");
+
+  if (!digits) {
+    return "";
+  }
+
+  return `R$ ${(Number.parseInt(digits, 10) / 100).toFixed(2)}`.replace(".", ",");
+}
+
+function toNullableCents(rawValue: string): number | undefined {
+  if (!rawValue.trim()) {
+    return undefined;
+  }
+
+  return parseCurrencyInputToCents(rawValue);
+}
+
+async function loadGeneralSettings(): Promise<void> {
+  generalSettingsLoading.value = true;
+  generalSettingsError.value = null;
+
+  try {
+    const response = await authenticatedFetch("/api/settings");
+    const data = await response.json();
+
+    if (!response.ok) {
+      generalSettingsError.value = data.message || "Não foi possível carregar as configurações gerais.";
+      return;
+    }
+
+    const settings = data.data as GeneralSettingsResponse;
+
+    systemForm.value = {
+      store_name: settings.store_name || "",
+      store_cnpj: formatCnpjForInput(settings.store_cnpj || ""),
+      store_address: settings.store_address || "",
+      store_phone: formatPhoneForInput(settings.store_phone || ""),
+      receipt_footer: settings.receipt_footer || "",
+      discount_limit_daily: settings.discount_limit_daily > 0 ? toCurrencyMaskedValue(String(settings.discount_limit_daily)) : "",
+      discount_limit_weekly: settings.discount_limit_weekly > 0 ? toCurrencyMaskedValue(String(settings.discount_limit_weekly)) : "",
+      discount_limit_monthly: settings.discount_limit_monthly > 0 ? toCurrencyMaskedValue(String(settings.discount_limit_monthly)) : "",
+    };
+
+    fiadoForm.value = {
+      fiado_max_days: settings.fiado_max_days > 0 ? String(settings.fiado_max_days) : "",
+      fiado_allow_inactive: settings.fiado_allow_inactive,
+      fiado_blocked_message: settings.fiado_blocked_message || "",
+    };
+  } catch {
+    generalSettingsError.value = "Erro de conexão ao carregar configurações gerais.";
+  } finally {
+    generalSettingsLoading.value = false;
+  }
+}
+
+async function saveSystemSettings(): Promise<void> {
+  generalSettingsSaving.value = true;
+  systemSubmitError.value = null;
+
+  try {
+    const response = await authenticatedFetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        store_name: systemForm.value.store_name.trim(),
+        store_cnpj: normalizeDigits(systemForm.value.store_cnpj),
+        store_address: systemForm.value.store_address.trim(),
+        store_phone: normalizeDigits(systemForm.value.store_phone),
+        receipt_footer: systemForm.value.receipt_footer.trim(),
+        discount_limit_daily: toNullableCents(systemForm.value.discount_limit_daily),
+        discount_limit_weekly: toNullableCents(systemForm.value.discount_limit_weekly),
+        discount_limit_monthly: toNullableCents(systemForm.value.discount_limit_monthly),
+      }),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      systemSubmitError.value = data.message || "Não foi possível salvar as configurações do sistema.";
+      return;
+    }
+
+    showSuccessToast("Configurações do sistema salvas com sucesso!");
+    await loadGeneralSettings();
+  } catch {
+    systemSubmitError.value = "Erro de conexão ao salvar configurações do sistema.";
+  } finally {
+    generalSettingsSaving.value = false;
+  }
+}
+
+async function saveFiadoSettings(): Promise<void> {
+  generalSettingsSaving.value = true;
+  fiadoSubmitError.value = null;
+
+  const maxDays = fiadoForm.value.fiado_max_days
+    ? Number.parseInt(fiadoForm.value.fiado_max_days, 10)
+    : 0;
+
+  if (Number.isNaN(maxDays) || maxDays < 0) {
+    fiadoSubmitError.value = "Informe um prazo máximo de fiado válido.";
+    generalSettingsSaving.value = false;
+    return;
+  }
+
+  try {
+    const response = await authenticatedFetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fiado_max_days: maxDays,
+        fiado_allow_inactive: fiadoForm.value.fiado_allow_inactive,
+        fiado_blocked_message: fiadoForm.value.fiado_blocked_message.trim(),
+      }),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      fiadoSubmitError.value = data.message || "Não foi possível salvar as configurações de fiado.";
+      return;
+    }
+
+    showSuccessToast("Configurações de fiado salvas com sucesso!");
+    await loadGeneralSettings();
+  } catch {
+    fiadoSubmitError.value = "Erro de conexão ao salvar configurações de fiado.";
+  } finally {
+    generalSettingsSaving.value = false;
+  }
 }
 
 async function loadPixSettings(): Promise<void> {
@@ -716,29 +882,22 @@ async function toggleCardMachineActive(cardMachine: CardMachine): Promise<void> 
   }
 }
 
-function openDeleteConfirmModal(cardMachine: CardMachine): void {
-  pendingDeleteMachineId.value = cardMachine.id;
-  pendingDeleteMachineName.value = cardMachine.name;
-  showDeleteConfirmModal.value = true;
-}
+async function deleteCardMachine(cardMachine: CardMachine): Promise<void> {
+  const ok = await confirm({
+    title: "Excluir maquininha",
+    message: `Tem certeza que deseja excluir permanentemente a maquininha "${cardMachine.name}"? Esta ação não pode ser desfeita.`,
+    confirmLabel: "Excluir",
+  });
 
-function closeDeleteConfirmModal(): void {
-  showDeleteConfirmModal.value = false;
-  pendingDeleteMachineId.value = null;
-  pendingDeleteMachineName.value = "";
-}
-
-async function confirmDeleteCardMachine(): Promise<void> {
-  if (!pendingDeleteMachineId.value) {
+  if (!ok) {
     return;
   }
 
   try {
-    const response = await authenticatedFetch(`/api/card-machines/${pendingDeleteMachineId.value}`, {
+    const response = await authenticatedFetch(`/api/card-machines/${cardMachine.id}`, {
       method: "DELETE",
     });
     const data = await response.json();
-    closeDeleteConfirmModal();
 
     if (!response.ok) {
       cardMachinesError.value = data.message || "Não foi possível excluir a maquininha.";
@@ -750,7 +909,6 @@ async function confirmDeleteCardMachine(): Promise<void> {
   } catch (error) {
     console.error("Erro ao excluir maquininha:", error);
     cardMachinesError.value = "Erro de conexão ao excluir maquininha.";
-    closeDeleteConfirmModal();
   }
 }
 
@@ -775,12 +933,7 @@ function closePasswordModal(): void {
 }
 
 function showSuccessToast(message: string): void {
-  toastMessage.value = message;
-  showToast.value = true;
-
-  setTimeout(() => {
-    showToast.value = false;
-  }, 3000);
+  toast(message);
 }
 
 async function confirmSavePixSettings(): Promise<void> {
@@ -936,11 +1089,145 @@ function changePaymentTab(tab: PaymentTabKey): void {
           v-if="activeMainTab === 'settings'"
           class="mt-6"
         >
-          <div class="rounded-lg border border-gray-200 bg-surface p-6 shadow-sm">
-            <p class="text-base font-semibold text-gray-700">🚧 Em desenvolvimento</p>
-            <p class="mt-3 text-sm text-gray-600">
-              As configurações gerais do sistema serão implementadas em uma próxima atualização.
+          <div v-if="generalSettingsLoading" class="space-y-3 rounded-lg border border-gray-200 bg-white p-6">
+            <div v-for="index in 5" :key="index" class="h-11 animate-pulse rounded bg-gray-100"></div>
+          </div>
+
+          <div v-else-if="generalSettingsError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-danger" role="alert">
+            <p>{{ generalSettingsError }}</p>
+            <button
+              type="button"
+              class="mt-3 rounded bg-primary px-3 py-1.5 text-white transition hover:bg-primary-dark"
+              @click="loadGeneralSettings"
+            >
+              Tentar novamente
+            </button>
+          </div>
+
+          <div v-else class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+            <h2 class="text-2xl font-bold text-gray-900">Configurações do Sistema</h2>
+            <p class="mt-1 text-sm text-gray-600">Dados gerais da loja e limites de desconto operacional.</p>
+
+            <p v-if="systemSubmitError" class="mt-4 rounded bg-red-100 p-3 text-sm text-danger" role="alert">
+              {{ systemSubmitError }}
             </p>
+
+            <form class="mt-6 space-y-6" @submit.prevent="saveSystemSettings">
+              <div class="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label for="store_name" class="mb-1 block text-sm font-medium text-gray-700">Nome da Loja</label>
+                  <input
+                    id="store_name"
+                    v-model="systemForm.store_name"
+                    type="text"
+                    maxlength="120"
+                    class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+
+                <div>
+                  <label for="store_cnpj" class="mb-1 block text-sm font-medium text-gray-700">CNPJ</label>
+                  <input
+                    id="store_cnpj"
+                    :value="systemForm.store_cnpj"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="00.000.000/0000-00"
+                    class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    @input="handleStoreCnpjInput"
+                  />
+                </div>
+
+                <div class="md:col-span-2">
+                  <label for="store_address" class="mb-1 block text-sm font-medium text-gray-700">Endereço</label>
+                  <input
+                    id="store_address"
+                    v-model="systemForm.store_address"
+                    type="text"
+                    maxlength="180"
+                    class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+
+                <div>
+                  <label for="store_phone" class="mb-1 block text-sm font-medium text-gray-700">Telefone</label>
+                  <input
+                    id="store_phone"
+                    :value="systemForm.store_phone"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="(81) 9 9999-9999"
+                    class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    @input="handleStorePhoneInput"
+                  />
+                </div>
+
+                <div>
+                  <label for="receipt_footer" class="mb-1 block text-sm font-medium text-gray-700">Rodapé do Recibo</label>
+                  <input
+                    id="receipt_footer"
+                    v-model="systemForm.receipt_footer"
+                    type="text"
+                    maxlength="255"
+                    class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4">
+                <h3 class="text-sm font-semibold text-gray-800">Limites de Desconto</h3>
+                <div class="mt-3 grid gap-4 md:grid-cols-3">
+                  <div>
+                    <label for="discount_limit_daily" class="mb-1 block text-sm font-medium text-gray-700">Diário</label>
+                    <input
+                      id="discount_limit_daily"
+                      :value="systemForm.discount_limit_daily"
+                      type="text"
+                      inputmode="numeric"
+                      placeholder="R$ 0,00"
+                      class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      @input="(event) => handleDiscountLimitInput(event, 'discount_limit_daily')"
+                    />
+                  </div>
+
+                  <div>
+                    <label for="discount_limit_weekly" class="mb-1 block text-sm font-medium text-gray-700">Semanal</label>
+                    <input
+                      id="discount_limit_weekly"
+                      :value="systemForm.discount_limit_weekly"
+                      type="text"
+                      inputmode="numeric"
+                      placeholder="R$ 0,00"
+                      class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      @input="(event) => handleDiscountLimitInput(event, 'discount_limit_weekly')"
+                    />
+                  </div>
+
+                  <div>
+                    <label for="discount_limit_monthly" class="mb-1 block text-sm font-medium text-gray-700">Mensal</label>
+                    <input
+                      id="discount_limit_monthly"
+                      :value="systemForm.discount_limit_monthly"
+                      type="text"
+                      inputmode="numeric"
+                      placeholder="R$ 0,00"
+                      class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      @input="(event) => handleDiscountLimitInput(event, 'discount_limit_monthly')"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex justify-end">
+                <button
+                  type="submit"
+                  class="rounded bg-primary px-4 py-2 font-medium text-white transition hover:bg-primary-dark disabled:opacity-50"
+                  :disabled="generalSettingsSaving"
+                >
+                  {{ generalSettingsSaving ? "Salvando..." : "Salvar Configurações" }}
+                </button>
+              </div>
+            </form>
           </div>
         </section>
 
@@ -1135,14 +1422,15 @@ function changePaymentTab(tab: PaymentTabKey): void {
 
           <div v-else class="mt-6 overflow-x-auto rounded-lg border border-gray-200 bg-white">
             <table class="w-full min-w-[1100px]">
+              <caption class="sr-only">Lista de maquininhas de cartao cadastradas</caption>
               <thead class="bg-gray-50">
                 <tr>
-                  <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Nome</th>
-                  <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
-                  <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Comportamento da Taxa</th>
-                  <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Taxa Débito</th>
-                  <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Taxa Crédito (base)</th>
-                  <th class="px-4 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
+                  <th scope="col" class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Nome</th>
+                  <th scope="col" class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
+                  <th scope="col" class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Comportamento da Taxa</th>
+                  <th scope="col" class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Taxa Débito</th>
+                  <th scope="col" class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Taxa Crédito (base)</th>
+                  <th scope="col" class="px-4 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200">
@@ -1173,6 +1461,7 @@ function changePaymentTab(tab: PaymentTabKey): void {
                         type="button"
                         class="rounded p-2 text-primary transition hover:bg-primary/10"
                         title="Editar maquininha"
+                        :aria-label="`Editar maquininha ${machine.name}`"
                         @click="openEditCardMachineModal(machine)"
                       >
                         ✏️
@@ -1195,7 +1484,8 @@ function changePaymentTab(tab: PaymentTabKey): void {
                         type="button"
                         class="rounded p-2 text-danger transition hover:bg-red-50"
                         title="Excluir maquininha permanentemente"
-                        @click="openDeleteConfirmModal(machine)"
+                        :aria-label="`Excluir maquininha ${machine.name}`"
+                        @click="deleteCardMachine(machine)"
                       >
                         🗑️
                       </button>
@@ -1219,22 +1509,81 @@ function changePaymentTab(tab: PaymentTabKey): void {
           "
           class="mt-6"
         >
-          <div class="rounded-lg border border-gray-200 bg-surface p-6 shadow-sm">
-            <p class="text-base font-semibold text-gray-700">🚧 Em desenvolvimento</p>
-            <p class="mt-3 text-sm text-gray-600">
-              As configurações de Fiado serão implementadas em uma próxima atualização do sistema.
+          <div class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+            <h2 class="text-2xl font-bold text-gray-900">Configurações de Fiado</h2>
+            <p class="mt-1 text-sm text-gray-600">Parâmetros para controle de crédito e bloqueio de novos lançamentos.</p>
+
+            <p v-if="fiadoSubmitError" class="mt-4 rounded bg-red-100 p-3 text-sm text-danger" role="alert">
+              {{ fiadoSubmitError }}
             </p>
+
+            <form class="mt-6 space-y-6" @submit.prevent="saveFiadoSettings">
+              <div class="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label for="fiado_max_days" class="mb-1 block text-sm font-medium text-gray-700">
+                    Prazo máximo para cobrança (dias)
+                  </label>
+                  <input
+                    id="fiado_max_days"
+                    :value="fiadoForm.fiado_max_days"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="Ex: 30"
+                    class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    @input="handleFiadoMaxDaysInput"
+                  />
+                </div>
+
+                <div class="flex items-end">
+                  <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <input
+                      v-model="fiadoForm.fiado_allow_inactive"
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary/20"
+                    />
+                    Permitir fiado para clientes inativos
+                  </label>
+                </div>
+
+                <div class="md:col-span-2">
+                  <label for="fiado_blocked_message" class="mb-1 block text-sm font-medium text-gray-700">
+                    Mensagem para cliente bloqueado
+                  </label>
+                  <textarea
+                    id="fiado_blocked_message"
+                    v-model="fiadoForm.fiado_blocked_message"
+                    rows="3"
+                    maxlength="255"
+                    class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    placeholder="Ex: Cliente com fiado bloqueado até regularização do débito."
+                  ></textarea>
+                </div>
+              </div>
+
+              <div class="flex justify-end">
+                <button
+                  type="submit"
+                  class="rounded bg-primary px-4 py-2 font-medium text-white transition hover:bg-primary-dark disabled:opacity-50"
+                  :disabled="generalSettingsSaving"
+                >
+                  {{ generalSettingsSaving ? "Salvando..." : "Salvar Configurações de Fiado" }}
+                </button>
+              </div>
+            </form>
           </div>
         </section>
 
         <div
           v-if="showCardMachineModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-card-machine-modal-title"
           @click.self="closeCardMachineModal"
         >
           <div class="w-full max-w-3xl rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">
+              <h2 id="settings-card-machine-modal-title" class="text-xl font-bold text-gray-900">
                 {{ isCardMachineEditMode ? "Editar Máquina" : "Nova Máquina" }}
               </h2>
               <button
@@ -1265,6 +1614,7 @@ function changePaymentTab(tab: PaymentTabKey): void {
                   <input
                     v-model="cardMachineFormData.name"
                     type="text"
+                    autofocus
                     placeholder="Ex: Moderninha Branca, Stone Balcão"
                     maxlength="100"
                     class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -1420,68 +1770,21 @@ function changePaymentTab(tab: PaymentTabKey): void {
           </div>
         </div>
 
-        <!-- Modal de confirmação de exclusão permanente de maquininha -->
-        <div
-          v-if="showDeleteConfirmModal"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-          @click.self="closeDeleteConfirmModal"
-        >
-          <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <div class="mb-4 flex items-center gap-3">
-              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger/10">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  class="h-5 w-5 text-danger"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-                  />
-                </svg>
-              </div>
-              <div>
-                <h2 class="text-lg font-bold text-gray-900">Excluir maquininha?</h2>
-                <p class="text-sm text-gray-600">Esta ação não pode ser desfeita.</p>
-              </div>
-            </div>
-
-            <p class="mb-6 text-sm text-gray-700">
-              Tem certeza que deseja excluir permanentemente a maquininha
-              <strong class="font-semibold">"{{ pendingDeleteMachineName }}"</strong>?
-            </p>
-
-            <div class="flex justify-end gap-3">
-              <button
-                type="button"
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
-                @click="closeDeleteConfirmModal"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                class="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-white transition hover:bg-danger/80"
-                @click="confirmDeleteCardMachine"
-              >
-                Excluir
-              </button>
-            </div>
-          </div>
-        </div>
+        <!-- Modal de confirmação de exclusão permanente de maquininha gerenciado por ConfirmDialog -->
 
         <div
           v-if="showPasswordModal"
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-password-modal-title"
           @click.self="closePasswordModal"
         >
           <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <div class="mb-4 flex items-center justify-between">
-              <h2 class="text-xl font-bold text-gray-900">Confirme sua senha para continuar</h2>
+              <h2 id="settings-password-modal-title" class="text-xl font-bold text-gray-900">
+                Confirme sua senha para continuar
+              </h2>
               <button
                 type="button"
                 class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
@@ -1519,6 +1822,7 @@ function changePaymentTab(tab: PaymentTabKey): void {
                   id="current_password"
                   v-model="confirmationPassword"
                   type="password"
+                  autofocus
                   autocomplete="current-password"
                   class="w-full rounded border border-gray-300 px-3 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
@@ -1571,12 +1875,26 @@ function changePaymentTab(tab: PaymentTabKey): void {
 
         <div
           v-if="showToast"
-          class="fixed bottom-4 right-4 z-50 rounded-lg bg-success px-6 py-3 text-white shadow-lg"
-          role="alert"
+          :role="toastType === 'error' ? 'alert' : 'status'"
+          :aria-live="toastType === 'error' ? 'assertive' : 'polite'"
+          aria-atomic="true"
+          :class="[
+            'fixed bottom-4 right-4 z-50 rounded-lg px-6 py-3 text-white shadow-lg',
+            toastType === 'error' ? 'bg-danger' : toastType === 'warning' ? 'bg-warning' : 'bg-success',
+          ]"
         >
           {{ toastMessage }}
         </div>
       </main>
     </div>
   </div>
+
+  <ConfirmDialog
+    :open="showConfirm"
+    :title="confirmTitle"
+    :message="confirmMessage"
+    :confirm-label="confirmLabel"
+    @confirm="onConfirm"
+    @cancel="onCancel"
+  />
 </template>

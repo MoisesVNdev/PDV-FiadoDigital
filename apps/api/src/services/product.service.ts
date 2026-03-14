@@ -1,5 +1,5 @@
 import { ProductRepository } from "../repositories/product.repository.js";
-import type { CreateProductPayload, UpdateProductPayload } from "@pdv/shared";
+import type { CreateProductPayload, ProductQueryParams, UpdateProductPayload } from "@pdv/shared";
 import { ProductTypeRepository } from "../repositories/product-type.repository.js";
 import { BrandRepository } from "../repositories/brand.repository.js";
 import { StockMovementRepository } from "../repositories/stock-movement.repository.js";
@@ -22,8 +22,8 @@ type UpdateProductWithStockPayload = UpdateProductPayload & {
 };
 
 export class ProductService {
-  async list(barcode?: string) {
-    return productRepository.findAll(barcode);
+  async list(params: ProductQueryParams) {
+    return productRepository.findAll(params);
   }
 
   async getById(id: string) {
