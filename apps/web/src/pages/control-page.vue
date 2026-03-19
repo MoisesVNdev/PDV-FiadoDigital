@@ -65,12 +65,6 @@ interface DiscountSummary {
   occurrences: number;
 }
 
-interface DiscountLimits {
-  discount_limit_daily: number;
-  discount_limit_weekly: number;
-  discount_limit_monthly: number;
-}
-
 interface CancellationRow {
   id: string;
   created_at: string;
@@ -154,16 +148,6 @@ const discountSummary = ref<DiscountSummary>({
   occurrences: 0,
 });
 
-const discountLimits = ref<DiscountLimits>({
-  discount_limit_daily: 0,
-  discount_limit_weekly: 0,
-  discount_limit_monthly: 0,
-});
-
-const discountLimitDailyInput = ref("");
-const discountLimitWeeklyInput = ref("");
-const discountLimitMonthlyInput = ref("");
-const discountLimitSaving = ref(false);
 
 const cancellationsLoading = ref(false);
 const cancellationsError = ref<string | null>(null);
@@ -220,45 +204,6 @@ const weightedAverageBulkCostCents = computed(() => {
   return stockSummary.value.weighted_average_cost_bulk_cents;
 });
 
-const selectedDiscountLimitCents = computed(() => {
-  if (periodPreset.value === "today") {
-    return discountLimits.value.discount_limit_daily;
-  }
-
-  if (periodPreset.value === "week") {
-    return discountLimits.value.discount_limit_weekly;
-  }
-
-  return discountLimits.value.discount_limit_monthly;
-});
-
-const discountLimitUsagePercent = computed(() => {
-  const limit = selectedDiscountLimitCents.value;
-
-  if (limit <= 0) {
-    return 0;
-  }
-
-  return Math.round((discountSummary.value.total_discount_cents / limit) * 100);
-});
-
-const discountLimitStatus = computed(() => {
-  const usage = discountLimitUsagePercent.value;
-
-  if (selectedDiscountLimitCents.value <= 0) {
-    return { label: "Sem limite configurado", className: "bg-gray-100 text-gray-700" };
-  }
-
-  if (usage > 100) {
-    return { label: "Limite ultrapassado", className: "bg-red-100 text-red-700" };
-  }
-
-  if (usage >= 80) {
-    return { label: "Próximo do limite", className: "bg-amber-100 text-amber-700" };
-  }
-
-  return { label: "Dentro do limite", className: "bg-green-100 text-green-700" };
-});
 
 const topOperatorAlert = computed(() => operatorAlertsToday.value[0] ?? null);
 
@@ -321,7 +266,7 @@ onMounted(async () => {
 });
 
 watch(
-  () => [selectedProductTypeId.value, selectedBrandId.value],
+  () => [selectedProductTypeId.value, selectedBrandId.value, stockPerPage.value],
   async () => {
     stockPage.value = 1;
     await loadStockSummary();
@@ -378,6 +323,7 @@ function toggleStockSort(key: StockSortKey): void {
     stockSortDirection.value = stockSortDirection.value === "asc" ? "desc" : "asc";
   }
 
+  stockPage.value = 1;
   loadStockSummary();
 }
 
@@ -452,20 +398,6 @@ function cancellationStatusClass(status: string): string {
     : "bg-orange-100 text-orange-700";
 }
 
-function handleDailyLimitInput(event: Event): void {
-  const target = event.target as HTMLInputElement;
-  discountLimitDailyInput.value = formatCurrencyInput(target.value);
-}
-
-function handleWeeklyLimitInput(event: Event): void {
-  const target = event.target as HTMLInputElement;
-  discountLimitWeeklyInput.value = formatCurrencyInput(target.value);
-}
-
-function handleMonthlyLimitInput(event: Event): void {
-  const target = event.target as HTMLInputElement;
-  discountLimitMonthlyInput.value = formatCurrencyInput(target.value);
-}
 
 function handleAdjustmentUnitCostInput(event: Event): void {
   const target = event.target as HTMLInputElement;
@@ -671,7 +603,6 @@ async function loadCashTabData(): Promise<void> {
   await Promise.all([
     loadCashSummary(),
     loadDiscountSummary(),
-    loadDiscountLimits(),
     loadCancellations(),
   ]);
 }
@@ -723,53 +654,6 @@ async function loadDiscountSummary(): Promise<void> {
   }
 }
 
-async function loadDiscountLimits(): Promise<void> {
-  try {
-    const response = await authenticatedFetch("/api/settings");
-    const json = await response.json();
-
-    if (!response.ok) {
-      return;
-    }
-
-    discountLimits.value = json.data as DiscountLimits;
-    discountLimitDailyInput.value = formatCents(discountLimits.value.discount_limit_daily);
-    discountLimitWeeklyInput.value = formatCents(discountLimits.value.discount_limit_weekly);
-    discountLimitMonthlyInput.value = formatCents(discountLimits.value.discount_limit_monthly);
-  } catch (error) {
-    console.error("Erro ao carregar limites de desconto:", error);
-  }
-}
-
-async function saveDiscountLimits(): Promise<void> {
-  discountLimitSaving.value = true;
-
-  try {
-    const response = await authenticatedFetch("/api/settings", {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        discount_limit_daily: parseCurrencyInputToCents(discountLimitDailyInput.value),
-        discount_limit_weekly: parseCurrencyInputToCents(discountLimitWeeklyInput.value),
-        discount_limit_monthly: parseCurrencyInputToCents(discountLimitMonthlyInput.value),
-      }),
-    });
-    const json = await response.json();
-
-    if (!response.ok) {
-      return;
-    }
-
-    discountLimits.value = json.data as DiscountLimits;
-    showSuccessToast("Limites de desconto de troco atualizados.");
-  } catch (error) {
-    console.error("Erro ao salvar limites de desconto:", error);
-  } finally {
-    discountLimitSaving.value = false;
-  }
-}
 
 async function loadCancellations(): Promise<void> {
   cancellationsLoading.value = true;
@@ -963,6 +847,20 @@ async function loadCancellations(): Promise<void> {
           </div>
 
           <div v-else>
+            <div class="mb-4 flex items-center justify-end">
+              <label for="stockPerPage" class="mr-2 text-sm font-medium text-gray-700">Itens por página:</label>
+              <select
+                id="stockPerPage"
+                v-model="stockPerPage"
+                class="rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/50"
+              >
+                <option :value="5">5</option>
+                <option :value="10">10</option>
+                <option :value="20">20</option>
+                <option :value="50">50</option>
+              </select>
+            </div>
+
             <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
               <table class="w-full min-w-[1200px]">
               <caption class="sr-only">Resumo e analise de estoque por produto</caption>
@@ -1155,24 +1053,34 @@ async function loadCancellations(): Promise<void> {
         </section>
 
         <section v-if="activeTab === 'cash'" class="mt-6 space-y-6">
-          <div class="rounded-lg border border-gray-200 bg-white p-4">
-            <span class="mb-2 block text-sm font-medium text-gray-700">Período:</span>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="preset in ['today', 'week', 'month']"
-                :key="preset"
-                type="button"
-                :class="[
-                  'h-9 rounded-lg px-4 text-sm font-medium transition',
-                  periodPreset === preset
-                    ? 'bg-primary text-white'
-                    : 'border border-gray-200 bg-white text-gray-600 hover:bg-surface',
-                ]"
-                :aria-pressed="periodPreset === preset"
-                @click="periodPreset = preset as PeriodPreset"
-              >
-                {{ preset === 'today' ? 'Hoje' : preset === 'week' ? 'Esta Semana' : 'Este Mês' }}
-              </button>
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-gray-200 bg-white p-4">
+            <div>
+              <span class="mb-2 block text-sm font-medium text-gray-700">Período:</span>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  v-for="preset in ['today', 'week', 'month']"
+                  :key="preset"
+                  type="button"
+                  :class="[
+                    'h-9 rounded-lg px-4 text-sm font-medium transition',
+                    periodPreset === preset
+                      ? 'bg-primary text-white'
+                      : 'border border-gray-200 bg-white text-gray-600 hover:bg-surface',
+                  ]"
+                  :aria-pressed="periodPreset === preset"
+                  @click="periodPreset = preset as PeriodPreset"
+                >
+                  {{ preset === 'today' ? 'Hoje' : preset === 'week' ? 'Esta Semana' : 'Este Mês' }}
+                </button>
+              </div>
+            </div>
+
+            <div class="flex flex-col sm:items-end rounded bg-gray-50 px-4 py-2">
+              <span class="text-xs font-medium text-gray-500 uppercase tracking-wide">Descontos Concedidos</span>
+              <p class="mt-0.5 flex items-baseline gap-2">
+                <span class="text-lg font-bold text-gray-900">{{ displayCents(discountSummary.total_discount_cents) }}</span>
+                <span class="text-xs text-gray-500">({{ discountSummary.occurrences }}x)</span>
+              </p>
             </div>
           </div>
 
@@ -1184,94 +1092,14 @@ async function loadCancellations(): Promise<void> {
             {{ cashError }}
           </div>
 
-          <article class="rounded-lg border border-gray-200 bg-white p-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <h2 class="text-lg font-semibold text-gray-900">Descontos de Troco</h2>
-              <span
-                class="inline-flex rounded-full px-3 py-1 text-xs font-semibold"
-                :class="discountLimitStatus.className"
-              >
-                {{ discountLimitStatus.label }}
-              </span>
-            </div>
-
-            <div class="mt-4 grid gap-4 md:grid-cols-2">
-              <div>
-                <p class="text-sm text-gray-600">Total de Descontos</p>
-                <p class="mt-1 text-3xl font-bold text-gray-900">{{ displayCents(discountSummary.total_discount_cents) }}</p>
-              </div>
-
-              <div>
-                <p class="text-sm text-gray-600">Número de Ocorrências</p>
-                <p class="mt-1 text-2xl font-bold text-gray-900">{{ discountSummary.occurrences }}</p>
-              </div>
-            </div>
-
-            <div class="mt-4">
-              <p class="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Uso do limite selecionado</p>
-              <div class="h-2 rounded-full bg-gray-200">
-                <div
-                  class="h-2 rounded-full bg-primary"
-                  :style="{ width: `${Math.min(discountLimitUsagePercent, 100)}%` }"
-                ></div>
-              </div>
-              <p class="mt-1 text-xs text-gray-600">{{ discountLimitUsagePercent }}%</p>
-            </div>
-
-            <form class="mt-6 grid gap-3 md:grid-cols-3" @submit.prevent="saveDiscountLimits">
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-700">Limite diário (R$)</label>
-                <input
-                  :value="discountLimitDailyInput"
-                  type="text"
-                  inputmode="numeric"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  @input="handleDailyLimitInput"
-                />
-              </div>
-
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-700">Limite semanal (R$)</label>
-                <input
-                  :value="discountLimitWeeklyInput"
-                  type="text"
-                  inputmode="numeric"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  @input="handleWeeklyLimitInput"
-                />
-              </div>
-
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-700">Limite mensal (R$)</label>
-                <input
-                  :value="discountLimitMonthlyInput"
-                  type="text"
-                  inputmode="numeric"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  @input="handleMonthlyLimitInput"
-                />
-              </div>
-
-              <div class="md:col-span-3">
-                <button
-                  type="submit"
-                  :disabled="discountLimitSaving"
-                  class="min-h-11 w-full rounded-lg bg-primary px-6 text-sm font-medium text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-                >
-                  {{ discountLimitSaving ? "Salvando..." : "Salvar limites" }}
-                </button>
-              </div>
-            </form>
-          </article>
-
-          <article class="rounded-lg border border-gray-200 bg-white p-4">
+          <article class="flex flex-col rounded-lg border border-gray-200 bg-white p-4">
             <h2 class="text-lg font-semibold text-gray-900">Resumo de Meios de Pagamento</h2>
 
             <div v-if="cashLoading" class="mt-4 space-y-3">
               <div v-for="index in 5" :key="index" class="h-12 animate-pulse rounded bg-gray-100"></div>
             </div>
 
-            <div v-else class="mt-4 space-y-4">
+            <div v-else class="mt-4 flex-1 space-y-4">
               <div
                 v-for="row in paymentDistribution"
                 :key="row.key"
@@ -1289,7 +1117,7 @@ async function loadCancellations(): Promise<void> {
                 </div>
               </div>
 
-              <div class="rounded-xl border border-primary/30 bg-primary/5 p-4">
+              <div class="mt-auto rounded-xl border border-primary/30 bg-primary/5 p-4">
                 <div class="flex items-center justify-between">
                   <p class="text-sm font-semibold text-gray-700">Total Geral</p>
                   <p class="text-xl font-bold text-gray-900">{{ displayCents(cashSummary.total_cents) }}</p>

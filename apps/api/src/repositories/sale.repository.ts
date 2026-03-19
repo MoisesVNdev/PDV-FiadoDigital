@@ -2,6 +2,29 @@ import { prisma } from "../config/database.js";
 import { PAYMENT_METHODS } from "@pdv/shared";
 import type { Prisma } from "@prisma/client";
 import type { CreateSalePayload } from "@pdv/shared";
+import {
+  fromStoredPercentage,
+  toStoredPercentage,
+} from "../utils/percentage-scaling.js";
+
+const saleInclude = {
+  items: true,
+  payments: {
+    where: {
+      deleted_at: null,
+    },
+  },
+} satisfies Prisma.SaleInclude;
+
+function mapSalePayments<T extends { payments: Array<{ applied_rate: number | null }> }>(sale: T): T {
+  return {
+    ...sale,
+    payments: sale.payments.map((payment) => ({
+      ...payment,
+      applied_rate: fromStoredPercentage(payment.applied_rate),
+    })),
+  };
+}
 
 export interface SaleQueryParams {
   page: number;
@@ -34,7 +57,7 @@ export class SaleRepository {
       prisma.sale.count({ where }),
       prisma.sale.findMany({
         where,
-        include: { items: true, payments: true },
+        include: saleInclude,
         orderBy: { created_at: "desc" },
         take: params.per_page,
         skip: (params.page - 1) * params.per_page,
@@ -42,7 +65,7 @@ export class SaleRepository {
     ]);
 
     return {
-      data,
+      data: data.map(mapSalePayments),
       pagination: {
         page: params.page,
         per_page: params.per_page,
@@ -53,17 +76,21 @@ export class SaleRepository {
   }
 
   async findById(id: string) {
-    return prisma.sale.findFirst({
+    const sale = await prisma.sale.findFirst({
       where: { id, deleted_at: null },
-      include: { items: true, payments: true },
+      include: saleInclude,
     });
+
+    return sale ? mapSalePayments(sale) : null;
   }
 
   async findByUuid(uuid: string) {
-    return prisma.sale.findFirst({
+    const sale = await prisma.sale.findFirst({
       where: { uuid },
-      include: { items: true, payments: true },
+      include: saleInclude,
     });
+
+    return sale ? mapSalePayments(sale) : null;
   }
 
   async create(payload: CreateSalePayload) {
@@ -108,11 +135,13 @@ export class SaleRepository {
               method: payment.method,
               amount_cents: payment.amount_cents,
               ...(payment.installments !== undefined ? { installments: payment.installments } : {}),
-              ...(payment.applied_rate !== undefined ? { applied_rate: payment.applied_rate } : {}),
+              ...(payment.applied_rate !== undefined
+                ? { applied_rate: toStoredPercentage(payment.applied_rate) }
+                : {}),
             })),
           },
         },
-        include: { items: true, payments: true },
+        include: saleInclude,
       });
 
       // 2. Validar e decrementar estoque de cada produto vendido
@@ -216,7 +245,7 @@ export class SaleRepository {
 
       // Retornar venda com informações de estoque baixo
       return {
-        sale,
+        sale: mapSalePayments(sale),
         lowStockProducts,
         affectedProductTypeIds: Array.from(affectedTypeIds),
       };
@@ -328,7 +357,7 @@ export class SaleRepository {
   async cancel(id: string, operatorId: string): Promise<void> {
     const sale = await prisma.sale.findFirst({
       where: { id, deleted_at: null },
-      include: { items: true, payments: true },
+      include: saleInclude,
     });
 
     if (!sale) {
@@ -403,7 +432,7 @@ export class SaleRepository {
   async refund(id: string, operatorId: string): Promise<void> {
     const sale = await prisma.sale.findFirst({
       where: { id, deleted_at: null },
-      include: { items: true, payments: true },
+      include: saleInclude,
     });
 
     if (!sale) {
@@ -489,7 +518,7 @@ export class SaleRepository {
         },
         OR: [
           { payment_method: PAYMENT_METHODS.CASH },
-          { payments: { some: { method: PAYMENT_METHODS.CASH } } },
+          { payments: { some: { method: PAYMENT_METHODS.CASH, deleted_at: null } } },
         ],
       },
       _sum: {

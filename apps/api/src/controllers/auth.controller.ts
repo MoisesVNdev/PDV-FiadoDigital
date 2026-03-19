@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { AuthService } from "../services/auth.service.js";
+import { wsTokenService } from "../services/ws-token.service.js";
 
 const authService = new AuthService();
 
@@ -88,6 +89,31 @@ export class AuthController {
       }
 
       res.json({ success: true, data: { valid: true } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async issueWsToken(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, message: "Token não fornecido" });
+        return;
+      }
+
+      const tokenResult = wsTokenService.issueToken(req.user);
+
+      res.json({
+        success: true,
+        data: {
+          ws_token: tokenResult.token,
+          expires_at: tokenResult.expires_at,
+        },
+      });
     } catch (error) {
       next(error);
     }

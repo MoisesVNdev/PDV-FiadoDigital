@@ -20,6 +20,17 @@ export interface NotificationExportParams {
   user_role?: string;
 }
 
+export interface NotificationDedupParams {
+  type: string;
+  customer_id: string;
+}
+
+export interface NotificationCleanupResult {
+  scanned: number;
+  duplicated: number;
+  updated: number;
+}
+
 export class NotificationRepository {
   async create(payload: Omit<CreateNotificationPayload, "target_roles"> & { target_roles: string }) {
     return prisma.notification.create({
@@ -95,6 +106,15 @@ export class NotificationRepository {
     });
   }
 
+  async deleteRead(userRole?: string) {
+    return prisma.notification.deleteMany({
+      where: {
+        read_at: { not: null },
+        ...(userRole ? { target_roles: { contains: `"${userRole}"` } } : {}),
+      },
+    });
+  }
+
   async acknowledge(id: string, userId: string) {
     return prisma.notification.update({
       where: { id },
@@ -127,5 +147,125 @@ export class NotificationRepository {
       },
       orderBy: { created_at: "desc" },
     });
+  }
+
+  async existsUnreadByTypeAndCustomer(params: NotificationDedupParams): Promise<boolean> {
+    const count = await prisma.notification.count({
+      where: {
+        type: params.type,
+        read_at: null,
+        meta: {
+          contains: `"customerId":"${params.customer_id}"`,
+        },
+      },
+    });
+
+    return count > 0;
+  }
+
+  async existsByTypeAndCustomerOnDate(
+    params: NotificationDedupParams,
+    date: Date,
+  ): Promise<boolean> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const count = await prisma.notification.count({
+      where: {
+        type: params.type,
+        created_at: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        meta: {
+          contains: `"customerId":"${params.customer_id}"`,
+        },
+      },
+    });
+
+    return count > 0;
+  }
+
+  async markOldUnreadDuplicatesAsReadByCustomerAndType(
+    types?: readonly string[],
+  ): Promise<NotificationCleanupResult> {
+    const unread = await prisma.notification.findMany({
+      where: {
+        read_at: null,
+        meta: { not: null },
+        ...(types && types.length > 0 ? { type: { in: [...types] } } : {}),
+      },
+      orderBy: [{ created_at: "desc" }, { id: "desc" }],
+      select: {
+        id: true,
+        type: true,
+        meta: true,
+      },
+    });
+
+    const seen = new Set<string>();
+    const toMarkAsRead: string[] = [];
+
+    for (const notification of unread) {
+      const customerId = this.extractCustomerIdFromMeta(notification.meta);
+
+      if (!customerId) {
+        continue;
+      }
+
+      const dedupKey = `${notification.type}::${customerId}`;
+
+      if (seen.has(dedupKey)) {
+        toMarkAsRead.push(notification.id);
+        continue;
+      }
+
+      seen.add(dedupKey);
+    }
+
+    if (toMarkAsRead.length === 0) {
+      return {
+        scanned: unread.length,
+        duplicated: 0,
+        updated: 0,
+      };
+    }
+
+    const result = await prisma.notification.updateMany({
+      where: {
+        id: { in: toMarkAsRead },
+        read_at: null,
+      },
+      data: {
+        read_at: new Date(),
+      },
+    });
+
+    return {
+      scanned: unread.length,
+      duplicated: toMarkAsRead.length,
+      updated: result.count,
+    };
+  }
+
+  private extractCustomerIdFromMeta(meta: string | null): string | null {
+    if (!meta) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(meta) as { customerId?: unknown };
+
+      if (typeof parsed.customerId !== "string" || !parsed.customerId.trim()) {
+        return null;
+      }
+
+      return parsed.customerId;
+    } catch {
+      return null;
+    }
   }
 }

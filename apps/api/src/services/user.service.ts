@@ -41,11 +41,12 @@ export class UserService {
   }
 
   async update(id: string, payload: Partial<CreateUserPayload>, changedById: string) {
-    const { password, name, username, can_view_cost_price } = payload;
+    const { password, name, username, can_view_cost_price, is_active } = payload;
     const updateData: UpdateUserData = {
       name,
       username,
       can_view_cost_price,
+      is_active,
     };
 
     if (password) {

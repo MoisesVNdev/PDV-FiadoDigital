@@ -17,6 +17,7 @@ export type CreateUserPayload = {
   password: string;
   role: Role;
   can_view_cost_price?: boolean;
+  is_active?: boolean;
 };
 
 export interface UpdateUserData {
@@ -24,4 +25,5 @@ export interface UpdateUserData {
   username?: string;
   password_hash?: string;
   can_view_cost_price?: boolean;
+  is_active?: boolean;
 }

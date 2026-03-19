@@ -1,32 +1,43 @@
 import type { Request, Response, NextFunction } from "express";
+import { z } from "zod";
 import { SaleService } from "../services/sale.service.js";
 
 const saleService = new SaleService();
 
+const saleListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  per_page: z.coerce.number().int().min(1).max(100).default(20),
+  from_date: z.coerce.date().optional(),
+  to_date: z.coerce.date().optional(),
+  status: z.enum(["completed", "cancelled", "refunded"]).optional(),
+  terminal_id: z.string().uuid().optional(),
+  operator_id: z.string().uuid().optional(),
+});
+
 export class SaleController {
   async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const page = typeof req.query.page === "number" ? req.query.page : 1;
-      const perPage = typeof req.query.per_page === "number" ? req.query.per_page : 20;
-      const fromDate = req.query.from_date instanceof Date ? req.query.from_date : undefined;
-      const toDate = req.query.to_date instanceof Date ? req.query.to_date : undefined;
-      const status =
-        typeof req.query.status === "string"
-          ? (req.query.status as "completed" | "cancelled" | "refunded")
-          : undefined;
-      const terminalId =
-        typeof req.query.terminal_id === "string" ? req.query.terminal_id : undefined;
-      const operatorId =
-        typeof req.query.operator_id === "string" ? req.query.operator_id : undefined;
+      const queryResult = saleListQuerySchema.safeParse(req.query);
+
+      if (!queryResult.success) {
+        res.status(400).json({
+          success: false,
+          message: "Parâmetros de consulta inválidos",
+          errors: queryResult.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const query = queryResult.data;
 
       const result = await saleService.list({
-        page,
-        per_page: perPage,
-        from_date: fromDate,
-        to_date: toDate,
-        status,
-        terminal_id: terminalId,
-        operator_id: operatorId,
+        page: query.page,
+        per_page: query.per_page,
+        from_date: query.from_date,
+        to_date: query.to_date,
+        status: query.status,
+        terminal_id: query.terminal_id,
+        operator_id: query.operator_id,
       });
 
       res.json({ success: true, data: result.data, pagination: result.pagination });

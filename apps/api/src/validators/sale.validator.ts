@@ -108,7 +108,6 @@ const cancelSaleSchema = z.object({
 
 const refundSaleSchema = z.object({
   manager_pin: z.string().min(4, "PIN de gerente obrigatório.").max(8),
-  receipt_id: z.string().uuid("ID do recibo original obrigatório para estorno."),
 });
 
 export function validateCancelSale(

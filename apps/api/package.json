@@ -15,6 +15,7 @@
     "db:migrate": "prisma db push --config prisma.config.ts",
     "db:migrate:deploy": "prisma migrate deploy --config prisma.config.ts",
     "db:seed": "tsx prisma/seed.ts",
+    "notifications:cleanup-duplicates": "tsx src/scripts/cleanup-notification-duplicates.ts",
     "db:studio": "prisma studio --config prisma.config.ts",
     "db:generate": "prisma generate --config prisma.config.ts",
     "clean": "rimraf dist"

@@ -1,26 +1,64 @@
 import type { Request, Response, NextFunction } from "express";
+import { z } from "zod";
 import { NotificationService } from "../services/notification.service.js";
 import type { NotificationQueryParams } from "../repositories/notification.repository.js";
 
 const notificationService = new NotificationService();
 
+const notificationListQuerySchema = z.object({
+  severity: z.enum(["critical", "high", "medium", "info"]).optional(),
+  read: z
+    .union([z.boolean(), z.literal("true"), z.literal("false")])
+    .transform((value) => {
+      if (value === true || value === "true") {
+        return true;
+      }
+
+      if (value === false || value === "false") {
+        return false;
+      }
+
+      return undefined;
+    })
+    .optional(),
+  search: z.string().max(100).optional(),
+  from_date: z.coerce.date().optional(),
+  to_date: z.coerce.date().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  per_page: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+const notificationExportQuerySchema = z.object({
+  severity: z.enum(["critical", "high", "medium", "info"]).optional(),
+  from_date: z.coerce.date().optional(),
+  to_date: z.coerce.date().optional(),
+});
+
 export class NotificationController {
   async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const query = req.query as Record<string, unknown>;
+      const queryResult = notificationListQuerySchema.safeParse(req.query);
+
+      if (!queryResult.success) {
+        res.status(400).json({
+          success: false,
+          message: "Parâmetros de consulta inválidos",
+          errors: queryResult.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const query = queryResult.data;
 
       const params: NotificationQueryParams = {
-        page: typeof query.page === "number" ? query.page : 1,
-        per_page: typeof query.per_page === "number" ? query.per_page : 20,
-        severity: typeof query.severity === "string" ? query.severity : undefined,
+        page: query.page,
+        per_page: query.per_page,
+        severity: query.severity,
         user_role: req.user?.role,
-        read:
-          query.read === true || query.read === false
-            ? (query.read as boolean)
-            : undefined,
-        search: typeof query.search === "string" ? query.search : undefined,
-        from_date: query.from_date instanceof Date ? query.from_date : undefined,
-        to_date: query.to_date instanceof Date ? query.to_date : undefined,
+        read: query.read,
+        search: query.search,
+        from_date: query.from_date,
+        to_date: query.to_date,
       };
 
       const result = await notificationService.list(params);
@@ -59,6 +97,19 @@ export class NotificationController {
     }
   }
 
+  async deleteRead(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await notificationService.deleteRead(req.user?.role);
+      res.json({
+        success: true,
+        message: "Notificações lidas removidas com sucesso",
+        data: { deleted_count: result.count },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getUnreadCount(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const result = await notificationService.getUnreadCount(req.user?.role);
@@ -70,12 +121,23 @@ export class NotificationController {
 
   async exportCsv(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const query = req.query as Record<string, unknown>;
+      const queryResult = notificationExportQuerySchema.safeParse(req.query);
+
+      if (!queryResult.success) {
+        res.status(400).json({
+          success: false,
+          message: "Parâmetros de consulta inválidos",
+          errors: queryResult.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const query = queryResult.data;
 
       const csv = await notificationService.exportCsv({
-        severity: typeof query.severity === "string" ? query.severity : undefined,
-        from_date: query.from_date instanceof Date ? query.from_date : undefined,
-        to_date: query.to_date instanceof Date ? query.to_date : undefined,
+        severity: query.severity,
+        from_date: query.from_date,
+        to_date: query.to_date,
         user_role: req.user?.role,
       });
 

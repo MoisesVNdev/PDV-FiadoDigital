@@ -9,7 +9,14 @@ import { SettingsRepository } from "../repositories/settings.repository.js";
 import { broadcast } from "../websocket/index.js";
 import { formatCents, PAYMENT_METHODS, NOTIFICATION_TYPES, NOTIFICATION_SEVERITIES } from "@pdv/shared";
 import type { CreateSalePayload } from "@pdv/shared";
+import type { DynamicStockAlertSettingKey } from "@pdv/shared";
 import type { SaleQueryParams } from "../repositories/sale.repository.js";
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  unprocessable,
+} from "../errors/domain-error.js";
 
 const saleRepository = new SaleRepository();
 const customerRepository = new CustomerRepository();
@@ -36,7 +43,7 @@ export class SaleService {
     const sale = await saleRepository.findById(id);
 
     if (!sale) {
-      throw new Error("Venda não encontrada");
+      throw notFound("Venda não encontrada");
     }
 
     return sale;
@@ -66,29 +73,29 @@ export class SaleService {
     ).size;
 
     if (payload.payments.length === 0) {
-      throw new Error("Dados inválidos: É obrigatório informar ao menos um pagamento.");
+      throw badRequest("Dados inválidos: É obrigatório informar ao menos um pagamento.");
     }
 
     if (payload.payments.length > 2 || uniquePaymentMethodsCount > 2) {
-      throw new Error("Dados inválidos: A venda permite no máximo 2 meios de pagamento distintos.");
+      throw badRequest("Dados inválidos: A venda permite no máximo 2 meios de pagamento distintos.");
     }
 
     if (uniquePaymentMethodsCount !== payload.payments.length) {
-      throw new Error("Dados inválidos: Não é permitido repetir o mesmo meio de pagamento.");
+      throw badRequest("Dados inválidos: Não é permitido repetir o mesmo meio de pagamento.");
     }
 
     if (paymentTotalCents !== totalCents) {
-      throw new Error("Dados inválidos: A soma dos pagamentos deve ser igual ao total da venda.");
+      throw badRequest("Dados inválidos: A soma dos pagamentos deve ser igual ao total da venda.");
     }
 
     const hasMultipleMethods = uniquePaymentMethodsCount > 1;
 
     if (hasMultipleMethods && payload.payment_method !== PAYMENT_METHODS.MIXED) {
-      throw new Error("Dados inválidos: payment_method deve ser 'mixed' quando houver mais de um meio de pagamento.");
+      throw badRequest("Dados inválidos: payment_method deve ser 'mixed' quando houver mais de um meio de pagamento.");
     }
 
     if (!hasMultipleMethods && payload.payment_method === PAYMENT_METHODS.MIXED) {
-      throw new Error("Dados inválidos: payment_method não pode ser 'mixed' com apenas um meio de pagamento.");
+      throw badRequest("Dados inválidos: payment_method não pode ser 'mixed' com apenas um meio de pagamento.");
     }
 
     // Validar limite de crédito quando houver pagamento no fiado
@@ -98,21 +105,21 @@ export class SaleService {
 
     if (fiadoPayments.length > 0) {
       if (!payload.customer_id) {
-        throw new Error("Dados inválidos: Cliente é obrigatório para pagamento no fiado.");
+        throw badRequest("Dados inválidos: Cliente é obrigatório para pagamento no fiado.");
       }
 
       const customer = await customerRepository.findById(payload.customer_id);
 
       if (!customer) {
-        throw new Error("Cliente não encontrado");
+        throw notFound("Cliente não encontrado");
       }
 
       if (!customer.is_active) {
-        throw new Error("Não é possível registrar uma venda para um cliente inativo.");
+        throw badRequest("Não é possível registrar uma venda para um cliente inativo.");
       }
 
       if (customer.credit_blocked) {
-        throw new Error("Dados inválidos: Cliente com crédito bloqueado não pode comprar no fiado.");
+        throw forbidden("Dados inválidos: Cliente com crédito bloqueado não pode comprar no fiado.");
       }
 
       const fiadoTotalCents = fiadoPayments.reduce(
@@ -122,13 +129,13 @@ export class SaleService {
       const availableCredit = customer.credit_limit_cents - customer.current_debt_cents;
 
       if (fiadoTotalCents > availableCredit) {
-        throw new Error(`Saldo de crédito insuficiente. Disponível: ${formatCents(availableCredit)}.`);
+        throw unprocessable(`Saldo de crédito insuficiente. Disponível: ${formatCents(availableCredit)}.`);
       }
     } else if (payload.customer_id) {
       const customer = await customerRepository.findById(payload.customer_id);
 
       if (customer && !customer.is_active) {
-        throw new Error("Não é possível registrar uma venda para um cliente inativo.");
+        throw badRequest("Não é possível registrar uma venda para um cliente inativo.");
       }
     }
 
@@ -208,24 +215,24 @@ export class SaleService {
     const managerId = await authService.validateManagerPin(managerPin);
 
     if (!managerId) {
-      throw new Error("PIN de gerente inválido.");
+      throw forbidden("PIN de gerente inválido.");
     }
 
     const sale = await saleRepository.findById(id);
 
     if (!sale) {
-      throw new Error("Venda não encontrada");
+      throw notFound("Venda não encontrada");
     }
 
     if (sale.status !== "completed") {
-      throw new Error("Apenas vendas concluídas podem ser canceladas.");
+      throw unprocessable("Apenas vendas concluídas podem ser canceladas.");
     }
 
     const today = new Date();
     const saleDate = new Date(sale.created_at);
 
     if (today.toDateString() !== saleDate.toDateString()) {
-      throw new Error("Cancelamento permitido apenas no dia da venda.");
+      throw unprocessable("Cancelamento permitido apenas no dia da venda.");
     }
 
     await saleRepository.cancel(id, operatorId);
@@ -243,17 +250,17 @@ export class SaleService {
     const managerId = await authService.validateManagerPin(managerPin);
 
     if (!managerId) {
-      throw new Error("PIN de gerente inválido.");
+      throw forbidden("PIN de gerente inválido.");
     }
 
     const sale = await saleRepository.findById(id);
 
     if (!sale) {
-      throw new Error("Venda não encontrada");
+      throw notFound("Venda não encontrada");
     }
 
     if (sale.status !== "completed") {
-      throw new Error("Apenas vendas concluídas podem ser estornadas.");
+      throw unprocessable("Apenas vendas concluídas podem ser estornadas.");
     }
 
     const today = new Date();
@@ -262,7 +269,7 @@ export class SaleService {
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
     if (diffDays > 7) {
-      throw new Error("Estorno permitido somente até 7 dias após a venda.");
+      throw unprocessable("Estorno permitido somente até 7 dias após a venda.");
     }
 
     await saleRepository.refund(id, operatorId);
@@ -298,7 +305,9 @@ export class SaleService {
     }
 
     const [settings, stockSnapshot] = await Promise.all([
-      settingsRepository.findMany(uniqueTypeIds.map((typeId) => `stock_alert_type_${typeId}`)),
+      settingsRepository.findMany(
+        uniqueTypeIds.map((typeId) => `stock_alert_type_${typeId}` as DynamicStockAlertSettingKey),
+      ),
       productRepository.getTypeStockSnapshotByIds(uniqueTypeIds),
     ]);
 

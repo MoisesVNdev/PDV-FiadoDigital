@@ -47,7 +47,7 @@ async function runCustomerDebtCheck(): Promise<void> {
     // Emitir notificações para clientes com fiado vencido e saldo em aberto
     const overdueCustomers = await customerRepository.findOverdueWithDebt();
     for (const customer of overdueCustomers) {
-      notificationService.create({
+      notificationService.createFiadoNotificationOncePerDay({
         type: NOTIFICATION_TYPES.FIADO_OVERDUE,
         severity: NOTIFICATION_SEVERITIES.HIGH,
         title: `Fiado vencido: ${customer.name}`,
@@ -67,7 +67,7 @@ async function runCustomerDebtCheck(): Promise<void> {
     const dueDayCustomers = await customerRepository.findDueDayWithDebt();
 
     for (const customer of dueDayCustomers) {
-      notificationService.create({
+      notificationService.createFiadoNotificationOncePerDay({
         type: NOTIFICATION_TYPES.FIADO_DUE_DAY_DEBT_OPEN,
         severity: NOTIFICATION_SEVERITIES.HIGH,
         title: `Fiado vencendo hoje: ${customer.name}`,

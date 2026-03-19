@@ -2,30 +2,33 @@ import { config } from "../config/index.js";
 import { SettingsService } from "./settings.service.js";
 import { generatePixPayload, validatePixInput } from "./pix-payload.service.js";
 import type { PixKeyType } from "../utils/pix-key.js";
-
-type PixPaymentStatus = "pending" | "confirmed" | "failed" | "expired";
-
-type PixTransaction = {
-  tx_id: string;
-  amount_cents: number;
-  status: PixPaymentStatus;
-  created_at: string;
-  expires_at: string;
-  paid_at?: string;
-  paid_amount_cents?: number;
-};
+import {
+  badRequest,
+  forbidden,
+  notFound,
+  serviceUnavailable,
+} from "../errors/domain-error.js";
+import {
+  PixTransactionRepository,
+  type PersistedPixTransaction,
+} from "../repositories/pix-transaction.repository.js";
 
 const PIX_QR_CODE_TTL_SECONDS = 300;
-const pixTransactions = new Map<string, PixTransaction>();
 
 export class PixService {
   private settingsService: SettingsService;
+  private pixTransactionRepository: PixTransactionRepository;
+  private initializePromise: Promise<void>;
 
   constructor() {
     this.settingsService = new SettingsService();
+    this.pixTransactionRepository = new PixTransactionRepository();
+    this.initializePromise = this.reconcilePendingTransactions();
   }
 
   async generateQRCode(txId: string | undefined, amountCents: number) {
+    await this.initializePromise;
+
     const normalizedTxId = txId?.trim() || `PDV${Date.now().toString(36).toUpperCase()}`;
     // Buscar configurações do banco (prioridade)
     const dbSettings = await this.settingsService.getPixSettings();
@@ -37,11 +40,11 @@ export class PixService {
     const merchantCity: string = (dbSettings.merchant_city || config.pix.merchantCity || "") as string;
 
     if (!pixKey.trim()) {
-      throw new Error("Chave Pix não configurada. Acesse Configurações > Pix para cadastrá-la.");
+      throw badRequest("Chave Pix não configurada. Acesse Configurações > Pix para cadastrá-la.");
     }
 
     if (!pixKeyType) {
-      throw new Error("Configuração inválida: Tipo de chave Pix é obrigatório.");
+      throw badRequest("Configuração inválida: Tipo de chave Pix é obrigatório.");
     }
 
     // Validar inputs
@@ -54,7 +57,7 @@ export class PixService {
     });
 
     if (!validation.valid) {
-      throw new Error(`Configuração inválida: ${validation.error}`);
+      throw badRequest(`Configuração inválida: ${validation.error}`);
     }
 
     // Gerar payload EMVCo
@@ -69,7 +72,7 @@ export class PixService {
     const createdAt = new Date();
     const expiresAt = new Date(createdAt.getTime() + PIX_QR_CODE_TTL_SECONDS * 1000);
 
-    pixTransactions.set(normalizedTxId, {
+    await this.pixTransactionRepository.upsert({
       tx_id: normalizedTxId,
       amount_cents: amountCents,
       status: "pending",
@@ -87,19 +90,18 @@ export class PixService {
     };
   }
 
-  getPaymentStatus(txId: string) {
-    const transaction = pixTransactions.get(txId);
+  async getPaymentStatus(txId: string) {
+    await this.initializePromise;
+
+    const transaction = await this.pixTransactionRepository.findByTxId(txId);
 
     if (!transaction) {
-      return {
-        tx_id: txId,
-        status: "not_found" as const,
-      };
+      throw notFound("Transação Pix não encontrada.");
     }
 
     if (transaction.status === "pending" && new Date(transaction.expires_at).getTime() <= Date.now()) {
       transaction.status = "expired";
-      pixTransactions.set(txId, transaction);
+      await this.pixTransactionRepository.upsert(transaction);
     }
 
     return {
@@ -113,38 +115,29 @@ export class PixService {
     };
   }
 
-  confirmPaymentFromWebhook(input: {
+  async confirmPaymentFromWebhook(input: {
     tx_id: string;
     status: "confirmed" | "failed" | "expired";
     paid_amount_cents?: number;
     paid_at?: Date;
   }) {
-    const transaction = pixTransactions.get(input.tx_id);
+    await this.initializePromise;
+
+    const transaction = await this.pixTransactionRepository.findByTxId(input.tx_id);
 
     if (!transaction) {
-      return {
-        tx_id: input.tx_id,
-        status: "not_found" as const,
-      };
+      throw notFound("Transação Pix não encontrada.");
     }
 
     if (transaction.status === "confirmed") {
-      return {
-        tx_id: transaction.tx_id,
-        status: transaction.status,
-        amount_cents: transaction.amount_cents,
-        created_at: transaction.created_at,
-        expires_at: transaction.expires_at,
-        paid_at: transaction.paid_at,
-        paid_amount_cents: transaction.paid_amount_cents,
-      };
+      return transaction;
     }
 
     transaction.status = input.status;
     transaction.paid_at = input.paid_at?.toISOString() ?? new Date().toISOString();
     transaction.paid_amount_cents = input.paid_amount_cents ?? transaction.amount_cents;
 
-    pixTransactions.set(input.tx_id, transaction);
+    await this.pixTransactionRepository.upsert(transaction);
 
     return {
       tx_id: transaction.tx_id,
@@ -161,11 +154,40 @@ export class PixService {
     const configuredSecret = config.pix.webhookSecret.trim();
 
     if (!configuredSecret) {
-      throw new Error("PIX_WEBHOOK_SECRET não configurado no servidor.");
+      throw serviceUnavailable("PIX_WEBHOOK_SECRET não configurado no servidor.");
     }
 
     if (!receivedSecret || receivedSecret.trim() !== configuredSecret) {
-      throw new Error("Assinatura de webhook Pix inválida.");
+      throw forbidden("Assinatura de webhook Pix inválida.");
     }
+  }
+
+  private async reconcilePendingTransactions(): Promise<void> {
+    const pendingTransactions = await this.pixTransactionRepository.findPending();
+
+    for (const transaction of pendingTransactions) {
+      const providerStatus = await this.queryProviderStatus(transaction);
+
+      if (providerStatus) {
+        await this.pixTransactionRepository.upsert(providerStatus);
+        continue;
+      }
+
+      if (new Date(transaction.expires_at).getTime() <= Date.now()) {
+        await this.pixTransactionRepository.upsert({
+          ...transaction,
+          status: "expired",
+        });
+      }
+    }
+  }
+
+  private async queryProviderStatus(
+    transaction: PersistedPixTransaction,
+  ): Promise<PersistedPixTransaction | null> {
+    // Placeholder de reconciliacao: integrar com o provedor Pix para consultar tx_id.
+    // Enquanto nao ha cliente HTTP/provedor configurado, retornamos null.
+    void transaction;
+    return null;
   }
 }

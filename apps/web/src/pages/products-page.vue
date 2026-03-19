@@ -80,10 +80,16 @@ const activeTab = ref<TabKey>("products");
 const products = ref<Product[]>([]);
 const loadingProducts = ref(false);
 const productsError = ref<string | null>(null);
+const productsCurrentPage = ref(1);
+const productsItemsPerPage = ref(10);
 
 const productTypes = ref<ProductType[]>([]);
 const loadingProductTypes = ref(false);
 const productTypesError = ref<string | null>(null);
+const productTypesCurrentPage = ref(1);
+const productTypesItemsPerPage = ref(10);
+const pricesCurrentPage = ref(1);
+const pricesItemsPerPage = ref(10);
 
 const brands = ref<Brand[]>([]);
 const loadingBrands = ref(false);
@@ -263,6 +269,12 @@ const sortedProductTypes = computed(() => {
   });
 });
 
+const paginatedProductTypes = computed(() => {
+  const start = (productTypesCurrentPage.value - 1) * productTypesItemsPerPage.value;
+  const end = start + productTypesItemsPerPage.value;
+  return sortedProductTypes.value.slice(start, end);
+});
+
 const sortedProductsForPrices = computed(() => {
   const direction = priceSort.value.direction === "asc" ? 1 : -1;
 
@@ -282,14 +294,29 @@ const sortedProductsForPrices = computed(() => {
       }
       case "cost":
         return direction * (left.cost_price_cents - right.cost_price_cents);
-      case "margin":
-        return direction * ((left.profit_margin ?? -1) - (right.profit_margin ?? -1));
+      case "margin": {
+        const leftMargin = left.profit_margin !== null ? left.profit_margin : (left.product_type?.profit_margin ?? -1);
+        const rightMargin = right.profit_margin !== null ? right.profit_margin : (right.product_type?.profit_margin ?? -1);
+        return direction * (leftMargin - rightMargin);
+      }
       case "sale":
         return direction * (left.price_cents - right.price_cents);
       case "stock":
         return direction * (left.stock_quantity - right.stock_quantity);
     }
   });
+});
+
+const paginatedProducts = computed(() => {
+  const start = (productsCurrentPage.value - 1) * productsItemsPerPage.value;
+  const end = start + productsItemsPerPage.value;
+  return sortedProducts.value.slice(start, end);
+});
+
+const paginatedProductsForPrices = computed(() => {
+  const start = (pricesCurrentPage.value - 1) * pricesItemsPerPage.value;
+  const end = start + pricesItemsPerPage.value;
+  return sortedProductsForPrices.value.slice(start, end);
 });
 
 const normalizedStockAddition = computed(() => {
@@ -344,6 +371,14 @@ const bulkCalculatedPriceCents = computed(() => {
   return Math.round(bulkAverageCostCents.value / (1 - margin / 100));
 });
 
+const sortedProductTypesForBulk = computed(() => {
+  return [...productTypes.value].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+});
+
+const sortedBulkBrands = computed(() => {
+  return [...bulkBrands.value].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+});
+
 const weightUnitOptions: Array<{ label: string; value: WeightUnit }> = [
   { label: "Quilograma (kg)", value: "kg" },
   { label: "Grama (g)", value: "g" },
@@ -364,6 +399,18 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleEscapeKey);
+});
+
+watch(productsItemsPerPage, () => {
+  productsCurrentPage.value = 1;
+});
+
+watch(productTypesItemsPerPage, () => {
+  productTypesCurrentPage.value = 1;
+});
+
+watch(pricesItemsPerPage, () => {
+  pricesCurrentPage.value = 1;
 });
 
 watch(
@@ -435,7 +482,8 @@ function formatWeight(product: Product): string {
 }
 
 function formatMargin(product: Product): string {
-  return formatProfitMargin(product.profit_margin);
+  const margin = product.profit_margin !== null ? product.profit_margin : (product.product_type?.profit_margin ?? null);
+  return formatProfitMargin(margin);
 }
 
 function formatStock(quantity: number, isBulk: boolean): string {
@@ -1249,6 +1297,10 @@ function handleBulkMarginInput(event: Event): void {
     return;
   }
 
+  if (normalized !== "" && Number.parseFloat(normalized) > 100) {
+    return;
+  }
+
   bulkPriceFormData.value.margin_percentage = normalized;
 }
 
@@ -1262,8 +1314,8 @@ async function submitBulkPrice(): Promise<void> {
     return;
   }
 
-  if (Number.isNaN(margin) || margin < 1 || margin > 99) {
-    bulkPriceError.value = "Margem deve estar entre 1 e 99.";
+  if (Number.isNaN(margin) || margin < 0 || margin > 100) {
+    bulkPriceError.value = "Margem deve estar entre 0 e 100.";
     return;
   }
 
@@ -1534,6 +1586,24 @@ async function submitSinglePrice(): Promise<void> {
           </div>
 
           <div v-else>
+            <!-- Controles Superiores: Itens por Página -->
+            <div
+              v-if="sortedProducts.length > 0"
+              class="mb-4 flex items-center justify-end gap-2 px-2 md:px-0"
+            >
+              <label for="productsItemsPerPage" class="text-sm text-gray-700">Itens por página:</label>
+              <select
+                id="productsItemsPerPage"
+                v-model="productsItemsPerPage"
+                class="rounded-md border border-gray-300 bg-white py-1 px-2 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option :value="5">5</option>
+                <option :value="10">10</option>
+                <option :value="20">20</option>
+                <option :value="50">50</option>
+              </select>
+            </div>
+
             <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
               <table class="w-full min-w-[1180px]">
                 <caption class="sr-only">Lista de produtos cadastrados</caption>
@@ -1575,7 +1645,7 @@ async function submitSinglePrice(): Promise<void> {
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
-                  <tr v-for="product in sortedProducts" :key="product.id" class="hover:bg-gray-50">
+                  <tr v-for="product in paginatedProducts" :key="product.id" class="hover:bg-gray-50">
                     <td class="px-6 py-4 text-sm text-gray-700">{{ product.barcode ?? "-" }}</td>
                     <td class="px-6 py-4 text-sm text-gray-900">{{ product.name }}</td>
                     <td class="px-6 py-4 text-sm text-gray-600">{{ product.brand?.name ?? "—" }}</td>
@@ -1609,7 +1679,7 @@ async function submitSinglePrice(): Promise<void> {
 
             <ul class="space-y-2 md:hidden">
               <li
-                v-for="product in sortedProducts"
+                v-for="product in paginatedProducts"
                 :key="product.id"
                 class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
               >
@@ -1672,6 +1742,35 @@ async function submitSinglePrice(): Promise<void> {
                 Nenhum produto encontrado.
               </li>
             </ul>
+
+            <!-- Controles de Paginação -->
+            <div
+              v-if="sortedProducts.length > 0"
+              class="mt-4 flex items-center justify-center border-t border-gray-200 pt-4 sm:justify-end"
+            >
+              <div class="flex items-center gap-4">
+                <button
+                  type="button"
+                  class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="productsCurrentPage === 1"
+                  @click="productsCurrentPage--"
+                >
+                  Anterior
+                </button>
+                <span class="text-sm text-gray-700">
+                  Página <span class="font-medium">{{ productsCurrentPage }}</span> de
+                  <span class="font-medium">{{ Math.ceil(sortedProducts.length / productsItemsPerPage) || 1 }}</span>
+                </span>
+                <button
+                  type="button"
+                  class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="productsCurrentPage >= Math.ceil(sortedProducts.length / productsItemsPerPage) || sortedProducts.length === 0"
+                  @click="productsCurrentPage++"
+                >
+                  Próximo
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1713,6 +1812,24 @@ async function submitSinglePrice(): Promise<void> {
           </div>
 
           <div v-else>
+            <!-- Controles Superiores: Itens por Página -->
+            <div
+              v-if="sortedProductTypes.length > 0"
+              class="mb-4 flex items-center justify-end gap-2 px-2 md:px-0"
+            >
+              <label for="productTypesItemsPerPage" class="text-sm text-gray-700">Itens por página:</label>
+              <select
+                id="productTypesItemsPerPage"
+                v-model="productTypesItemsPerPage"
+                class="rounded-md border border-gray-300 bg-white py-1 px-2 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option :value="5">5</option>
+                <option :value="10">10</option>
+                <option :value="20">20</option>
+                <option :value="50">50</option>
+              </select>
+            </div>
+
             <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
               <table class="w-full min-w-[640px]">
                 <caption class="sr-only">Lista de tipos de produto cadastrados</caption>
@@ -1738,7 +1855,7 @@ async function submitSinglePrice(): Promise<void> {
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
-                  <tr v-for="item in sortedProductTypes" :key="item.id" class="hover:bg-gray-50">
+                  <tr v-for="item in paginatedProductTypes" :key="item.id" class="hover:bg-gray-50">
                     <td class="px-6 py-4 text-sm text-gray-900">{{ item.name }}</td>
                     <td class="px-6 py-4 text-sm text-gray-700">{{ formatProfitMargin(item.profit_margin) }}</td>
                     <td class="px-6 py-4">
@@ -1768,7 +1885,7 @@ async function submitSinglePrice(): Promise<void> {
 
             <ul class="space-y-2 md:hidden">
               <li
-                v-for="item in sortedProductTypes"
+                v-for="item in paginatedProductTypes"
                 :key="item.id"
                 class="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm"
               >
@@ -1802,6 +1919,35 @@ async function submitSinglePrice(): Promise<void> {
                 </div>
               </li>
             </ul>
+
+            <!-- Controles de Paginação -->
+            <div
+              v-if="sortedProductTypes.length > 0"
+              class="mt-4 flex items-center justify-center border-t border-gray-200 pt-4 sm:justify-end"
+            >
+              <div class="flex items-center gap-4">
+                <button
+                  type="button"
+                  class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="productTypesCurrentPage === 1"
+                  @click="productTypesCurrentPage--"
+                >
+                  Anterior
+                </button>
+                <span class="text-sm text-gray-700">
+                  Página <span class="font-medium">{{ productTypesCurrentPage }}</span> de
+                  <span class="font-medium">{{ Math.ceil(sortedProductTypes.length / productTypesItemsPerPage) || 1 }}</span>
+                </span>
+                <button
+                  type="button"
+                  class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="productTypesCurrentPage >= Math.ceil(sortedProductTypes.length / productTypesItemsPerPage) || sortedProductTypes.length === 0"
+                  @click="productTypesCurrentPage++"
+                >
+                  Próximo
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1821,6 +1967,24 @@ async function submitSinglePrice(): Promise<void> {
           </div>
 
           <div v-else>
+            <!-- Controles Superiores: Itens por Página -->
+            <div
+              v-if="sortedProductsForPrices.length > 0"
+              class="mb-4 flex items-center justify-end gap-2 px-2 md:px-0"
+            >
+              <label for="pricesItemsPerPage" class="text-sm text-gray-700">Itens por página:</label>
+              <select
+                id="pricesItemsPerPage"
+                v-model="pricesItemsPerPage"
+                class="rounded-md border border-gray-300 bg-white py-1 px-2 text-sm text-gray-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option :value="5">5</option>
+                <option :value="10">10</option>
+                <option :value="20">20</option>
+                <option :value="50">50</option>
+              </select>
+            </div>
+
             <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
               <table class="w-full min-w-[1120px]">
                 <caption class="sr-only">Tabela de precos e margens dos produtos</caption>
@@ -1872,7 +2036,7 @@ async function submitSinglePrice(): Promise<void> {
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
-                  <tr v-for="product in sortedProductsForPrices" :key="product.id" class="hover:bg-gray-50">
+                  <tr v-for="product in paginatedProductsForPrices" :key="product.id" class="hover:bg-gray-50">
                     <td class="px-6 py-4 text-sm text-gray-700">{{ product.name }}</td>
                     <td class="px-6 py-4 text-sm text-gray-700">{{ product.product_type?.name ?? "-" }}</td>
                     <td class="px-6 py-4 text-sm text-gray-700">{{ product.brand?.name ?? "—" }}</td>
@@ -1906,7 +2070,7 @@ async function submitSinglePrice(): Promise<void> {
 
             <ul class="space-y-2 md:hidden">
               <li
-                v-for="product in sortedProductsForPrices"
+                v-for="product in paginatedProductsForPrices"
                 :key="product.id"
                 class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
               >
@@ -1942,6 +2106,35 @@ async function submitSinglePrice(): Promise<void> {
                 </div>
               </li>
             </ul>
+
+            <!-- Controles de Paginação -->
+            <div
+              v-if="sortedProductsForPrices.length > 0"
+              class="mt-4 flex items-center justify-center border-t border-gray-200 pt-4 sm:justify-end"
+            >
+              <div class="flex items-center gap-4">
+                <button
+                  type="button"
+                  class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="pricesCurrentPage === 1"
+                  @click="pricesCurrentPage--"
+                >
+                  Anterior
+                </button>
+                <span class="text-sm text-gray-700">
+                  Página <span class="font-medium">{{ pricesCurrentPage }}</span> de
+                  <span class="font-medium">{{ Math.ceil(sortedProductsForPrices.length / pricesItemsPerPage) || 1 }}</span>
+                </span>
+                <button
+                  type="button"
+                  class="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="pricesCurrentPage >= Math.ceil(sortedProductsForPrices.length / pricesItemsPerPage) || sortedProductsForPrices.length === 0"
+                  @click="pricesCurrentPage++"
+                >
+                  Próximo
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -2577,7 +2770,7 @@ async function submitSinglePrice(): Promise<void> {
                   class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="">Selecione</option>
-                  <option v-for="item in productTypes" :key="item.id" :value="item.id">
+                  <option v-for="item in sortedProductTypesForBulk" :key="item.id" :value="item.id">
                     {{ item.name }}
                   </option>
                 </select>
@@ -2593,7 +2786,7 @@ async function submitSinglePrice(): Promise<void> {
                 >
                   <option v-if="!bulkPriceFormData.product_type_id" value="">Selecione um tipo primeiro</option>
                   <option v-else value="">Todas</option>
-                  <option v-for="item in bulkBrands" :key="item.id" :value="item.id">
+                  <option v-for="item in sortedBulkBrands" :key="item.id" :value="item.id">
                     {{ item.name }}
                   </option>
                 </select>

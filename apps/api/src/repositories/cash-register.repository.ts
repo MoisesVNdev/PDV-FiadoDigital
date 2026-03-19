@@ -1,6 +1,7 @@
 import { prisma } from "../config/database.js";
 import { PAYMENT_METHODS } from "@pdv/shared";
 import type { Prisma } from "@prisma/client";
+import { notFound, unprocessable } from "../errors/domain-error.js";
 
 export interface CashRegisterQueryParams {
   page: number;
@@ -71,7 +72,7 @@ export class CashRegisterRepository {
     const register = await prisma.cashRegister.findUnique({ where: { id } });
 
     if (!register) {
-      throw new Error("Caixa não encontrado");
+      throw notFound("Caixa não encontrado");
     }
 
     return prisma.cashRegister.update({
@@ -93,7 +94,7 @@ export class CashRegisterRepository {
     const register = await prisma.cashRegister.findUnique({ where: { id } });
 
     if (!register || register.status !== "open") {
-      throw new Error("Caixa não está aberto");
+      throw unprocessable("Caixa não está aberto");
     }
 
     return prisma.$transaction(async (tx) => {
@@ -125,7 +126,7 @@ export class CashRegisterRepository {
     const register = await prisma.cashRegister.findUnique({ where: { id } });
 
     if (!register || register.status !== "open") {
-      throw new Error("Caixa não está aberto");
+      throw unprocessable("Caixa não está aberto");
     }
 
     return prisma.$transaction(async (tx) => {

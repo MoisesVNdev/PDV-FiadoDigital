@@ -4,6 +4,7 @@ import { config } from "../config/index.js";
 import { UserRepository } from "../repositories/user.repository.js";
 import { AuditLogRepository } from "../repositories/audit-log.repository.js";
 import { ROLES } from "@pdv/shared";
+import { forbidden, unauthorized } from "../errors/domain-error.js";
 
 const userRepository = new UserRepository();
 const auditLogRepository = new AuditLogRepository();
@@ -38,7 +39,7 @@ export class AuthService {
         });
       }
 
-      throw new Error("Credenciais inválidas");
+      throw unauthorized("Credenciais inválidas");
     }
 
     const validPassword = await bcrypt.compare(password, user.password_hash);
@@ -52,11 +53,11 @@ export class AuthService {
         details: { username },
         ip_address: ipAddress,
       });
-      throw new Error("Credenciais inválidas");
+      throw unauthorized("Credenciais inválidas");
     }
 
     if (!user.is_active) {
-      throw new Error("Usuário desativado");
+      throw forbidden("Usuário desativado");
     }
 
     const accessToken = this.generateAccessToken(user.id, user.role);
@@ -103,7 +104,7 @@ export class AuthService {
     const user = await userRepository.findById(payload.sub);
 
     if (!user || !user.is_active) {
-      throw new Error("Token inválido");
+      throw unauthorized("Token inválido");
     }
 
     const newAccessToken = this.generateAccessToken(user.id, user.role);

@@ -38,6 +38,14 @@ notificationRouter.patch(
   controller.markAllRead,
 );
 
+// Remover notificações já lidas (apenas para administradores/gerentes)
+notificationRouter.delete(
+  "/read",
+  authenticate,
+  authorize("admin", "manager"),
+  controller.deleteRead,
+);
+
 notificationRouter.patch(
   "/:id/read",
   authenticate,

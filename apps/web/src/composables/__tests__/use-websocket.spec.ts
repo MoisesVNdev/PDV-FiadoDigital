@@ -5,8 +5,11 @@ import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWebSocket } from "../use-websocket.js";
 
+const fetchMock = vi.fn();
+
 const authStoreMock = {
   accessToken: null as string | null,
+  tryRestoreAuth: vi.fn(async () => false),
 };
 
 class FakeWebSocket {
@@ -33,8 +36,11 @@ vi.mock("@/stores/auth.store.js", () => ({
 describe("useWebSocket", () => {
   beforeEach(() => {
     authStoreMock.accessToken = null;
+    authStoreMock.tryRestoreAuth.mockClear();
     FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket as unknown as typeof WebSocket);
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
     delete (globalThis as Record<string, unknown>).__pdvWsState;
   });
 
@@ -45,6 +51,10 @@ describe("useWebSocket", () => {
 
   it("conecta quando há token e atualiza estado em onopen", async () => {
     authStoreMock.accessToken = "abc-123";
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { ws_token: "ws-ephemeral-token" } }),
+    } as Response);
 
     const TestComponent = defineComponent({
       setup() {
@@ -56,8 +66,12 @@ describe("useWebSocket", () => {
 
     const wrapper = mount(TestComponent);
 
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(FakeWebSocket.instances.length).toBe(1);
-    expect(FakeWebSocket.instances[0]?.url).toContain("token=abc-123");
+    expect(FakeWebSocket.instances[0]?.url).toContain("ws_token=ws-ephemeral-token");
 
     FakeWebSocket.instances[0]?.onopen?.({} as Event);
 
@@ -87,14 +101,15 @@ describe("useWebSocket", () => {
     const wrapper = mount(TestComponent);
 
     for (let index = 0; index < 12; index += 1) {
-      vi.runOnlyPendingTimers();
+      await vi.runOnlyPendingTimersAsync();
     }
 
     const wsState = (globalThis as Record<string, unknown>).__pdvWsState as {
       connectionWarning: { value: string | null };
     };
 
-    expect(wsState.connectionWarning.value).toContain("Conexão com o servidor perdida");
+    expect(wsState.connectionWarning.value).toBe("Conexão com o servidor perdida. Verifique a rede.");
+    expect(authStoreMock.tryRestoreAuth).toHaveBeenCalled();
 
     wrapper.unmount();
   });

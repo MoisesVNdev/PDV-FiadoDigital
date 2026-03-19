@@ -11,3 +11,4 @@ authRouter.post("/login", authLimiter, validateBody, controller.login);
 authRouter.post("/refresh", controller.refresh);
 authRouter.post("/logout", controller.logout);
 authRouter.post("/validate-pin", pinRateLimiter, authenticate, validatePinBody, controller.validatePin);
+authRouter.post("/ws-token", authenticate, controller.issueWsToken);

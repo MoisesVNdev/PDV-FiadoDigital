@@ -1,7 +1,7 @@
 import { WebSocketServer, type WebSocket } from "ws";
 import type { Server } from "http";
-import jwt, { type JwtPayload } from "jsonwebtoken";
-import { config } from "../config/index.js";
+import { wsTokenService } from "../services/ws-token.service.js";
+import type { AuthPayload } from "../middlewares/auth.middleware.js";
 
 type WsMessage = {
   type: string;
@@ -9,7 +9,7 @@ type WsMessage = {
 };
 
 interface AuthenticatedWs extends WebSocket {
-  user?: JwtPayload;
+  user?: AuthPayload;
 }
 
 const clients = new Set<WebSocket>();
@@ -20,20 +20,21 @@ export function initWebSocket(server: Server): void {
   wss.on("connection", (ws, req) => {
     const requestHost = req.headers.host ?? "localhost";
     const requestUrl = new URL(req.url ?? "", `http://${requestHost}`);
-    const token = requestUrl.searchParams.get("token");
+    const token = requestUrl.searchParams.get("ws_token");
 
     if (!token) {
-      ws.close(1008, "Token não fornecido.");
+      ws.close(1008, "Token WS não fornecido.");
       return;
     }
 
-    try {
-      const payload = jwt.verify(token, config.jwt.secret) as JwtPayload;
-      (ws as AuthenticatedWs).user = payload;
-    } catch {
-      ws.close(1008, "Token inválido ou expirado.");
+    const payload = wsTokenService.consumeToken(token);
+
+    if (!payload) {
+      ws.close(1008, "Token WS inválido, expirado ou já utilizado.");
       return;
     }
+
+    (ws as AuthenticatedWs).user = payload;
 
     clients.add(ws);
     console.log(

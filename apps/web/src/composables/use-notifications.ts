@@ -208,6 +208,24 @@ export function useNotifications() {
     }
   }
 
+  // ── Apagar notificações lidas ───────────────────────────────────────────
+  async function deleteRead(): Promise<{ count: number } | void> {
+    try {
+      const res = await authenticatedFetch(`/api/notifications/read`, { method: "DELETE" });
+      if (!res.ok) return;
+      const json = (await res.json()) as { success: boolean; data?: { deleted_count?: number } };
+      if (!json.success) return;
+
+      // Atualizar estado local: remover notificações lidas
+      notifications.value = notifications.value.filter((n) => !n.read_at);
+      globalState.recentNotifications.value = globalState.recentNotifications.value.filter((n) => !n.read_at);
+
+      return { count: json.data?.deleted_count ?? 0 };
+    } catch {
+      // Falha silenciosa
+    }
+  }
+
   // ── Toasts ───────────────────────────────────────────────────────────────
   function dismissToast(id: string): void {
     globalState.toasts.value = globalState.toasts.value.filter((t) => t.id !== id);
@@ -283,6 +301,7 @@ export function useNotifications() {
     markAllRead,
     acknowledge,
     exportCsv,
+    deleteRead,
     dismissToast,
     handleWebSocketMessage,
     startPolling,

@@ -3,6 +3,7 @@ import { SettingsRepository } from "../repositories/settings.repository.js";
 import { NotificationService } from "./notification.service.js";
 import { formatCents, NOTIFICATION_SEVERITIES, NOTIFICATION_TYPES } from "@pdv/shared";
 import type { CashRegisterQueryParams } from "../repositories/cash-register.repository.js";
+import { badRequest, conflict } from "../errors/domain-error.js";
 
 const cashRegisterRepository = new CashRegisterRepository();
 const settingsRepository = new SettingsRepository();
@@ -24,11 +25,11 @@ export class CashRegisterService {
     operator_id: string;
   }) {
     if (!payload.terminal_id || !payload.operator_id) {
-      throw new Error("Dados inválidos");
+      throw badRequest("Dados inválidos");
     }
 
     if (!Number.isInteger(payload.opening_balance_cents) || payload.opening_balance_cents < 0) {
-      throw new Error("Valor de abertura inválido");
+      throw badRequest("Valor de abertura inválido");
     }
 
     const existing = await cashRegisterRepository.findOpenByTerminal(
@@ -36,7 +37,7 @@ export class CashRegisterService {
     );
 
     if (existing) {
-      throw new Error("Já existe um caixa aberto neste terminal");
+      throw conflict("Já existe um caixa aberto neste terminal");
     }
 
     return cashRegisterRepository.create(payload);
@@ -53,11 +54,11 @@ export class CashRegisterService {
     operator_id: string;
   }) {
     if (!Number.isInteger(payload.amount_cents) || payload.amount_cents <= 0) {
-      throw new Error("Valor inválido");
+      throw badRequest("Valor inválido");
     }
 
     if (!payload.operator_id) {
-      throw new Error("Operador inválido");
+      throw badRequest("Operador inválido");
     }
 
     return cashRegisterRepository.cashOut(
@@ -75,11 +76,11 @@ export class CashRegisterService {
     operator_id: string;
   }) {
     if (!Number.isInteger(payload.amount_cents) || payload.amount_cents <= 0) {
-      throw new Error("Valor inválido");
+      throw badRequest("Valor inválido");
     }
 
     if (!payload.operator_id) {
-      throw new Error("Operador inválido");
+      throw badRequest("Operador inválido");
     }
 
     const updatedRegister = await cashRegisterRepository.cashIn(

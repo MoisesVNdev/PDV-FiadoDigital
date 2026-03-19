@@ -8,6 +8,7 @@ import type {
   UpdateProductPayload,
 } from "@pdv/shared";
 import type { Prisma } from "@prisma/client";
+import { fromStoredRatio, toStoredRatio } from "../utils/percentage-scaling.js";
 
 const DEFAULT_PER_PAGE = 20;
 const MAX_PER_PAGE = 100;
@@ -36,6 +37,7 @@ function toProduct(product: {
 }): Product {
   return {
     ...product,
+    profit_margin: fromStoredRatio(product.profit_margin),
     weight_unit: product.weight_unit as ProductWeightUnit | null,
     brand: product.brand
       ? {
@@ -47,6 +49,7 @@ function toProduct(product: {
     product_type: product.product_type
       ? {
           ...product.product_type,
+          profit_margin: fromStoredRatio(product.product_type.profit_margin),
           created_at: product.product_type.created_at.toISOString(),
           updated_at: product.product_type.updated_at.toISOString(),
         }
@@ -137,7 +140,7 @@ export class ProductRepository {
   }
 
   async findById(id: string) {
-    return prisma.product.findFirst({
+    const product = await prisma.product.findFirst({
       where: { id, deleted_at: null },
       include: {
         brand: {
@@ -159,6 +162,8 @@ export class ProductRepository {
         },
       },
     });
+
+    return product ? toProduct(product) : null;
   }
 
   async findByBarcode(barcode: string) {
@@ -177,7 +182,7 @@ export class ProductRepository {
       weight_value: data.weight_value ?? null,
       weight_unit: data.weight_unit ?? null,
       product_type_id: data.product_type_id ?? null,
-      profit_margin: data.profit_margin ?? null,
+      profit_margin: data.profit_margin === undefined ? null : toStoredRatio(data.profit_margin),
       price_cents: data.price_cents ?? 0,
       cost_price_cents: data.cost_price_cents,
       average_cost_cents: data.average_cost_cents ?? data.cost_price_cents,
@@ -187,7 +192,7 @@ export class ProductRepository {
       is_active: data.is_active ?? true,
     };
 
-    return prisma.product.create({
+    const product = await prisma.product.create({
       data: createData,
       include: {
         brand: {
@@ -209,6 +214,8 @@ export class ProductRepository {
         },
       },
     });
+
+    return toProduct(product);
   }
 
   async update(id: string, data: UpdateProductPayload) {
@@ -220,7 +227,7 @@ export class ProductRepository {
       ...(data.weight_value !== undefined ? { weight_value: data.weight_value } : {}),
       ...(data.weight_unit !== undefined ? { weight_unit: data.weight_unit } : {}),
       ...(data.product_type_id !== undefined ? { product_type_id: data.product_type_id } : {}),
-      ...(data.profit_margin !== undefined ? { profit_margin: data.profit_margin } : {}),
+      ...(data.profit_margin !== undefined ? { profit_margin: toStoredRatio(data.profit_margin) } : {}),
       ...(data.price_cents !== undefined ? { price_cents: data.price_cents } : {}),
       ...(data.cost_price_cents !== undefined ? { cost_price_cents: data.cost_price_cents } : {}),
       ...(data.average_cost_cents !== undefined ? { average_cost_cents: data.average_cost_cents } : {}),
@@ -230,7 +237,7 @@ export class ProductRepository {
       ...(data.is_active !== undefined ? { is_active: data.is_active } : {}),
     };
 
-    return prisma.product.update({
+    const product = await prisma.product.update({
       where: { id },
       data: updateData,
       include: {
@@ -253,6 +260,8 @@ export class ProductRepository {
         },
       },
     });
+
+    return toProduct(product);
   }
 
   async findByBrandId(brandId: string) {
@@ -284,7 +293,7 @@ export class ProductRepository {
       where: { id },
       data: {
         price_cents: priceCents,
-        profit_margin: profitMargin,
+        profit_margin: toStoredRatio(profitMargin),
       },
     });
   }

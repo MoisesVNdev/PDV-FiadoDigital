@@ -8,6 +8,7 @@ const createUserSchema = z.object({
   password: z.string().regex(/^\d{6}$/, "Senha deve conter exatamente 6 dígitos numéricos"),
   role: z.enum([ROLES.ADMIN, ROLES.MANAGER, ROLES.STOCKIST, ROLES.OPERATOR]),
   can_view_cost_price: z.boolean().optional(),
+  is_active: z.boolean().optional(),
 });
 
 const updateUserSchema = createUserSchema

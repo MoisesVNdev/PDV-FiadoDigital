@@ -6,7 +6,9 @@ import AppSidebar from "@/components/layout/app-sidebar.vue";
 import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import { useApi } from "@/composables/use-api.js";
 import { useConfirm } from "@/composables/use-confirm.js";
+import { useCustomerDomain } from "@/composables/use-customer-domain.js";
 import { useFormatting } from "@/composables/use-formatting.js";
+import { useModalStack } from "@/composables/use-modal-stack.js";
 import { useToast } from "@/composables/use-toast.js";
 import { useCustomerStore } from "@/stores/customer.store.js";
 
@@ -131,10 +133,22 @@ const whatsappMessageVencido = ref(
 const whatsappMessageAVencer = ref(
   "Olá [NOME], passando para lembrar que o seu fiado de [TOTAL] vence em [VENCIMENTO]. Se precisar, estamos à disposição.",
 );
+const whatsappDuePartialMessage = ref(
+  "Olá [NOME], passando para lembrar que o seu fiado de [TOTAL] vence em [VENCIMENTO]. Sua cobrança atual é de [COBRANCA]. Se precisar, estamos à disposição.",
+);
+const whatsappOverduePartialMessage = ref(
+  "Olá [NOME], notamos que o seu fiado de [TOTAL] venceu em [VENCIMENTO]. Falta um pagamento de [COBRANCA]. Como podemos te ajudar a regularizar?",
+);
 
 const { showToast, toastMessage, toastType, toast } = useToast();
 const { showConfirm, confirmTitle, confirmMessage, confirmLabel, confirm, onConfirm, onCancel } = useConfirm();
 const { formatPhoneForDisplay, formatPhoneForInput, normalizePhoneDigits } = useFormatting();
+const {
+  getPaymentHistoryTypeLabel,
+  getPaymentHistoryDebtBeforeCents,
+  buildCustomerPayload,
+  buildWhatsAppChargeMessage,
+} = useCustomerDomain();
 
 const allCustomersForHistory = ref<Customer[]>([]);
 const loadingHistoryCustomers = ref(false);
@@ -347,26 +361,6 @@ function handleEscapeKey(event: KeyboardEvent): void {
     return;
   }
 
-  if (showModal.value) {
-    closeModal();
-    return;
-  }
-
-  if (showPaymentModal.value) {
-    closePaymentModal();
-    return;
-  }
-
-  if (showWhatsAppModal.value) {
-    closeWhatsAppModal();
-    return;
-  }
-
-  if (showReceiptModal.value) {
-    closeReceiptModal();
-    return;
-  }
-
   if (showHistoryCustomerDropdown.value) {
     showHistoryCustomerDropdown.value = false;
   }
@@ -380,33 +374,6 @@ function formatDateDay(dateTime: string): string {
 function formatTime(dateTime: string): string {
   const date = new Date(dateTime);
   return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-}
-
-function extractPaymentMetadata(row: PaymentHistoryRow): { type: "full" | "partial"; debtBefore: number | null } {
-  if (!row.description) {
-    return { type: "partial", debtBefore: row.debt_before_cents };
-  }
-
-  try {
-    const parsed = JSON.parse(row.description) as { type?: string; debt_before?: number };
-
-    return {
-      type: parsed.type === "full" ? "full" : "partial",
-      debtBefore: typeof parsed.debt_before === "number" ? parsed.debt_before : row.debt_before_cents,
-    };
-  } catch {
-    return { type: "partial", debtBefore: row.debt_before_cents };
-  }
-}
-
-function getPaymentHistoryTypeLabel(row: PaymentHistoryRow): string {
-  const metadata = extractPaymentMetadata(row);
-  return metadata.type === "full" ? "Completo" : "Parcial";
-}
-
-function getPaymentHistoryDebtBeforeCents(row: PaymentHistoryRow): number {
-  const metadata = extractPaymentMetadata(row);
-  return metadata.debtBefore ?? 0;
 }
 
 function formatDateTimeWithConnector(dateTime: string): string {
@@ -599,14 +566,6 @@ function formatPaymentDueDay(day: number | null): string {
   return `Todo dia ${day}`;
 }
 
-function formatWhatsAppDueDate(day: number | null): string {
-  if (!day) {
-    return "Não informado";
-  }
-
-  return `todo dia ${day}`;
-}
-
 function toggleDebtVisibility(customerId: string): void {
   const currentVisibility = debtVisibilityByCustomerId.value[customerId] ?? false;
   debtVisibilityByCustomerId.value[customerId] = !currentVisibility;
@@ -635,20 +594,25 @@ function toHistoryPeriodParam(rawValue: unknown, min: number, max: number): stri
 }
 
 function createHistorySearchParams(page: number, perPage: number): URLSearchParams {
-  const params = new URLSearchParams({
-    page: String(page),
-    per_page: String(perPage),
-  });
+  const params = new URLSearchParams();
+
+  if (page) {
+    params.append("page", String(page));
+  }
+
+  if (perPage) {
+    params.append("per_page", String(perPage));
+  }
 
   const month = toHistoryPeriodParam(selectedHistoryMonth.value, 1, 12);
   const year = toHistoryPeriodParam(selectedHistoryYear.value, 2000, 9999);
 
   if (month) {
-    params.set("month", month);
+    params.append("month", month);
   }
 
   if (year) {
-    params.set("year", year);
+    params.append("year", year);
   }
 
   return params;
@@ -857,6 +821,21 @@ function goToNextPaymentHistoryPage(): void {
   loadPaymentHistory();
 }
 
+function handlePerPageChange(): void {
+  currentPage.value = 1;
+  loadCustomers();
+}
+
+function handleFiadoHistoryPerPageChange(): void {
+  fiadoHistoryPage.value = 1;
+  loadFiadoHistory();
+}
+
+function handlePaymentHistoryPerPageChange(): void {
+  paymentHistoryPage.value = 1;
+  loadPaymentHistory();
+}
+
 function goToPage(page: number): void {
   currentPage.value = page;
   loadCustomers();
@@ -950,6 +929,16 @@ function closeWhatsAppModal(): void {
   whatsAppFormErrors.value = {};
 }
 
+useModalStack(
+  [
+    { isOpen: showModal, close: closeModal },
+    { isOpen: showPaymentModal, close: closePaymentModal },
+    { isOpen: showWhatsAppModal, close: closeWhatsAppModal },
+    { isOpen: showReceiptModal, close: closeReceiptModal },
+  ],
+  { listenEscape: true },
+);
+
 function showSuccessToast(message: string): void {
   toast(message);
 }
@@ -991,25 +980,17 @@ async function loadWhatsAppSettings(): Promise<void> {
     if (typeof data.whatsapp_message_fiado_a_vencer === "string" && data.whatsapp_message_fiado_a_vencer.trim()) {
       whatsappMessageAVencer.value = data.whatsapp_message_fiado_a_vencer;
     }
+
+    if (typeof data.whatsapp_due_partial_message === "string" && data.whatsapp_due_partial_message.trim()) {
+      whatsappDuePartialMessage.value = data.whatsapp_due_partial_message;
+    }
+
+    if (typeof data.whatsapp_overdue_partial_message === "string" && data.whatsapp_overdue_partial_message.trim()) {
+      whatsappOverduePartialMessage.value = data.whatsapp_overdue_partial_message;
+    }
   } catch {
     // silently fall back to built-in defaults
   }
-}
-
-function buildWhatsAppChargeMessage(customer: Customer, chargeAmountCents: number): string {
-  const today = new Date();
-  const dueDay = customer.payment_due_day;
-  const isOverdue = dueDay === null || today.getDate() > dueDay;
-  const template = isOverdue ? whatsappMessageVencido.value : whatsappMessageAVencer.value;
-  const dueDate = formatWhatsAppDueDate(dueDay);
-  const isPartial = whatsAppFormData.value.charge_type === "partial";
-  const totalDisplay = isPartial ? formatCents(chargeAmountCents) : formatCents(customer.current_debt_cents);
-
-  return template
-    .replace(/\[NOME\]/g, customer.name)
-    .replace(/\[TOTAL\]/g, totalDisplay)
-    .replace(/\[COBRANCA\]/g, formatCents(chargeAmountCents))
-    .replace(/\[VENCIMENTO\]/g, dueDate);
 }
 
 function validateForm(): boolean {
@@ -1124,16 +1105,17 @@ async function submitForm(): Promise<void> {
   formErrors.value.submit = undefined;
 
   const creditLimitCents = parseCurrencyToCents(formData.value.credit_limit_input);
-  const paymentDueDay = formData.value.payment_due_day
-    ? Number.parseInt(formData.value.payment_due_day, 10)
-    : undefined;
-
   const payload = {
-    name: formData.value.name.trim(),
-    phone: normalizePhoneDigits(formData.value.phone) || undefined,
-    credit_limit_cents: creditLimitCents ?? 0,
-    payment_due_day: paymentDueDay,
-    is_active: formData.value.is_active,
+    ...buildCustomerPayload(
+      {
+        name: formData.value.name,
+        phone: formData.value.phone,
+        creditLimitCents: creditLimitCents ?? 0,
+        paymentDueDay: formData.value.payment_due_day,
+        isActive: formData.value.is_active,
+      },
+      normalizePhoneDigits,
+    ),
   };
 
   try {
@@ -1246,7 +1228,15 @@ function submitWhatsAppForm(): void {
     return;
   }
 
-  const message = buildWhatsAppChargeMessage(selectedWhatsAppCustomer.value, chargeAmountCents);
+  const message = buildWhatsAppChargeMessage({
+    customer: selectedWhatsAppCustomer.value,
+    chargeAmountCents,
+    chargeType: whatsAppFormData.value.charge_type,
+    messageVencido: whatsappMessageVencido.value,
+    messageAVencer: whatsappMessageAVencer.value,
+    messageDuePartial: whatsappDuePartialMessage.value,
+    messageOverduePartial: whatsappOverduePartialMessage.value,
+  });
   const whatsappUrl = `https://wa.me/55${phoneDigits}?text=${encodeURIComponent(message)}`;
 
   window.open(whatsappUrl, "_blank");
@@ -1367,6 +1357,21 @@ function submitWhatsAppForm(): void {
 
           <!-- Table / Mobile Cards -->
           <div v-else>
+            <div class="mb-4 flex items-center justify-end">
+              <div class="flex items-center gap-2">
+                <label class="text-sm font-medium text-gray-700">Itens por página:</label>
+                <select
+                  v-model="perPage"
+                  @change="handlePerPageChange"
+                  class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  <option :value="5">5</option>
+                  <option :value="10">10</option>
+                  <option :value="20">20</option>
+                  <option :value="50">50</option>
+                </select>
+              </div>
+            </div>
             <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
               <table class="w-full min-w-[1200px]">
                 <caption class="sr-only">Lista de clientes cadastrados</caption>
@@ -1890,6 +1895,21 @@ function submitWhatsAppForm(): void {
               </div>
 
               <template v-else>
+                <div class="mb-4 flex items-center justify-end">
+                  <div class="flex items-center gap-2">
+                    <label class="text-sm font-medium text-gray-700">Itens por página:</label>
+                    <select
+                      v-model="fiadoHistoryPerPage"
+                      @change="handleFiadoHistoryPerPageChange"
+                      class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    >
+                      <option :value="5">5</option>
+                      <option :value="10">10</option>
+                      <option :value="20">20</option>
+                      <option :value="50">50</option>
+                    </select>
+                  </div>
+                </div>
                 <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
                   <table class="w-full min-w-[720px]">
                     <caption class="sr-only">Histórico de compras em fiado do cliente selecionado</caption>
@@ -2187,6 +2207,21 @@ function submitWhatsAppForm(): void {
               </div>
 
               <template v-else>
+                <div class="mb-4 flex items-center justify-end">
+                  <div class="flex items-center gap-2">
+                    <label class="text-sm font-medium text-gray-700">Itens por página:</label>
+                    <select
+                      v-model="paymentHistoryPerPage"
+                      @change="handlePaymentHistoryPerPageChange"
+                      class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    >
+                      <option :value="5">5</option>
+                      <option :value="10">10</option>
+                      <option :value="20">20</option>
+                      <option :value="50">50</option>
+                    </select>
+                  </div>
+                </div>
                 <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
                   <table class="w-full min-w-[760px]">
                     <caption class="sr-only">Histórico de pagamentos de fiado do cliente selecionado</caption>

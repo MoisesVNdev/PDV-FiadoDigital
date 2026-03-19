@@ -35,7 +35,7 @@ export const useCustomerStore = defineStore("customer", () => {
     error.value = null;
 
     try {
-      const response = await authenticatedFetch("/api/customers?only_active=false&page=1&per_page=200");
+      const response = await authenticatedFetch("/api/customers?only_active=false&page=1&per_page=1000");
       const data = await response.json();
 
       if (!response.ok) {

@@ -1,8 +1,52 @@
 import { formatCents, parseCentsFromString } from "@pdv/shared";
 
 export function useFormatting() {
+  function normalizeDigits(rawValue: string): string {
+    return rawValue.replace(/\D/g, "");
+  }
+
   function normalizePhoneDigits(rawValue: string): string {
-    return rawValue.replace(/\D/g, "").slice(0, 11);
+    return normalizeDigits(rawValue).slice(0, 11);
+  }
+
+  function formatCpfForInput(rawValue: string): string {
+    const digits = normalizeDigits(rawValue).slice(0, 11);
+
+    if (digits.length <= 3) {
+      return digits;
+    }
+
+    if (digits.length <= 6) {
+      return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+    }
+
+    if (digits.length <= 9) {
+      return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+    }
+
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+  }
+
+  function formatCnpjForInput(rawValue: string): string {
+    const digits = normalizeDigits(rawValue).slice(0, 14);
+
+    if (digits.length <= 2) {
+      return digits;
+    }
+
+    if (digits.length <= 5) {
+      return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+    }
+
+    if (digits.length <= 8) {
+      return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`;
+    }
+
+    if (digits.length <= 12) {
+      return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8)}`;
+    }
+
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
   }
 
   function formatPhoneForDisplay(rawValue: string | null): string {
@@ -95,13 +139,43 @@ export function useFormatting() {
    * Adequado para validação de formulários onde vazio ≠ zero.
    */
   function parseCurrencyInputToNullableCents(rawValue: string): number | null {
-    const digitsOnly = rawValue.replace(/\D/g, "");
+    const digitsOnly = normalizeDigits(rawValue);
 
     if (!digitsOnly) {
       return null;
     }
 
     return parseCentsFromString(rawValue);
+  }
+
+  function formatWeightInput(rawValue: string): string {
+    const digits = normalizeDigits(rawValue);
+
+    if (!digits) {
+      return "";
+    }
+
+    const kilograms = Number.parseInt(digits, 10) / 1000;
+    return kilograms.toLocaleString("pt-BR", {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    });
+  }
+
+  function parseWeightInputToNullableKg(rawValue: string): number | null {
+    const normalized = rawValue.trim();
+
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number.parseFloat(normalized.replace(/\./g, "").replace(",", "."));
+
+    if (Number.isNaN(parsed)) {
+      return null;
+    }
+
+    return parsed;
   }
 
   /**
@@ -128,12 +202,17 @@ export function useFormatting() {
   }
 
   return {
+    normalizeDigits,
     normalizePhoneDigits,
+    formatCpfForInput,
+    formatCnpjForInput,
     formatPhoneForDisplay,
     formatPhoneForInput,
     formatCurrencyInput,
     parseCurrencyInputToCents,
     parseCurrencyInputToNullableCents,
+    formatWeightInput,
+    parseWeightInputToNullableKg,
     formatStockQuantity,
     displayPercent,
   };

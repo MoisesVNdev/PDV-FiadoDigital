@@ -28,6 +28,7 @@ const {
   markAllRead,
   acknowledge,
   exportCsv,
+  deleteRead,
 } = useNotifications();
 
 const activeTab = ref<TabKey>("all");
@@ -90,6 +91,14 @@ async function handleAcknowledge(notification: Notification): Promise<void> {
 
 async function handleMarkAllRead(): Promise<void> {
   await markAllRead();
+  await loadNotifications();
+}
+
+async function handleDeleteRead(): Promise<void> {
+  const confirmDelete = window.confirm("Tem certeza que deseja apagar todas as notificações lidas? Esta ação não pode ser desfeita.");
+  if (!confirmDelete) return;
+
+  await deleteRead();
   await loadNotifications();
 }
 
@@ -166,14 +175,24 @@ onMounted(() => {
         <!-- Cabeçalho da página -->
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h1 class="text-xl font-bold text-gray-900">Notificações</h1>
-          <button
-            v-if="canAcknowledge"
-            type="button"
-            class="rounded bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-primary"
-            @click="handleExport"
-          >
-            Exportar CSV
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              v-if="canAcknowledge"
+              type="button"
+              class="rounded bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-primary"
+              @click="handleExport"
+            >
+              Exportar CSV
+            </button>
+            <button
+              v-if="canAcknowledge"
+              type="button"
+              class="rounded bg-danger/90 px-3 py-2 text-sm font-medium text-white transition hover:bg-danger-dark focus:outline-none focus:ring-2 focus:ring-danger"
+              @click="handleDeleteRead"
+            >
+              Apagar lidas
+            </button>
+          </div>
         </div>
 
         <!-- Abas de filtro -->

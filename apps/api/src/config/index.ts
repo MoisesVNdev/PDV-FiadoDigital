@@ -18,3 +18,17 @@ export const config = {
     webhookSecret: (process.env.PIX_WEBHOOK_SECRET || "") as string,
   },
 } as const;
+
+export function assertRequiredSecrets(): void {
+  if (config.nodeEnv !== "production") {
+    return;
+  }
+
+  if (!config.jwt.secret.trim()) {
+    throw new Error("JWT_SECRET não configurado para ambiente de produção.");
+  }
+
+  if (!config.jwt.refreshSecret.trim()) {
+    throw new Error("JWT_REFRESH_SECRET não configurado para ambiente de produção.");
+  }
+}

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import type { CardMachine } from "@pdv/shared";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
 import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import { useApi } from "@/composables/use-api.js";
 import { useConfirm } from "@/composables/use-confirm.js";
 import { useFormatting } from "@/composables/use-formatting.js";
+import { useModalStack } from "@/composables/use-modal-stack.js";
+import { useSettingsDomain } from "@/composables/use-settings-domain.js";
 import { useToast } from "@/composables/use-toast.js";
 import { useAuthStore } from "@/stores/auth.store.js";
 
@@ -75,6 +77,8 @@ interface GeneralSettingsResponse {
   fiado_alert_on_due_day: boolean;
   whatsapp_message_fiado_vencido: string;
   whatsapp_message_fiado_a_vencer: string;
+  whatsapp_due_partial_message?: string;
+  whatsapp_overdue_partial_message?: string;
   stock_alert_type_settings: Record<string, number>;
   stock_alert_type_pct_settings?: Record<string, number>;
 }
@@ -89,12 +93,13 @@ interface ProductStockUnitInfo {
   is_bulk: boolean;
 }
 
-type WhatsAppTemplateField = "whatsapp_message_fiado_vencido" | "whatsapp_message_fiado_a_vencer";
+type WhatsAppTemplateField = "whatsapp_message_fiado_vencido" | "whatsapp_message_fiado_a_vencer" | "whatsapp_due_partial_message" | "whatsapp_overdue_partial_message";
 
 const { authenticatedFetch } = useApi();
 const authStore = useAuthStore();
 const activeMainTab = ref<MainTabKey>("settings");
 const activePaymentTab = ref<PaymentTabKey>("pix");
+const activeWhatsappTemplate = ref<WhatsAppTemplateField>("whatsapp_message_fiado_vencido");
 
 const pixKeyTypeOptions: Array<{ value: PixKeyType; label: string }> = [
   { value: "cpf", label: "CPF" },
@@ -144,6 +149,8 @@ const fiadoForm = ref({
 const whatsappForm = ref({
   whatsapp_message_fiado_vencido: "",
   whatsapp_message_fiado_a_vencer: "",
+  whatsapp_due_partial_message: "",
+  whatsapp_overdue_partial_message: "",
 });
 
 const alertsForm = ref({
@@ -171,7 +178,17 @@ const modalError = ref<string | null>(null);
 
 const { showToast, toastMessage, toastType, toast } = useToast();
 const { showConfirm, confirmTitle, confirmMessage, confirmLabel, confirm, onConfirm, onCancel } = useConfirm();
-const { formatPhoneForInput, parseCurrencyInputToCents } = useFormatting();
+const {
+  normalizeDigits,
+  formatCpfForInput,
+  formatCnpjForInput,
+  formatPhoneForInput,
+  formatCurrencyInput,
+  parseCurrencyInputToNullableCents,
+  formatWeightInput,
+  parseWeightInputToNullableKg,
+} = useFormatting();
+const { sanitizePixKeyInput, validatePixKey, parseRateInput } = useSettingsDomain();
 
 const cardMachines = ref<CardMachine[]>([]);
 const loadingCardMachines = ref(false);
@@ -198,6 +215,8 @@ const currentAdminName = computed(() => authStore.user?.name?.trim() || "Adminis
 const isCardMachinesTab = computed(() => activePaymentTab.value === "card-machines");
 const whatsappVencidoTextarea = ref<HTMLTextAreaElement | null>(null);
 const whatsappAVencerTextarea = ref<HTMLTextAreaElement | null>(null);
+const whatsappDuePartialTextarea = ref<HTMLTextAreaElement | null>(null);
+const whatsappOverduePartialTextarea = ref<HTMLTextAreaElement | null>(null);
 const whatsappTokenButtons = [
   { label: "+ Nome do Cliente", token: "[NOME]" },
   { label: "+ Valor Total", token: "[TOTAL]" },
@@ -209,6 +228,10 @@ const whatsappMessageDefaults: Record<WhatsAppTemplateField, string> = {
     "Olá [NOME], notamos que o seu fiado de [TOTAL] venceu em [VENCIMENTO]. Como podemos te ajudar a regularizar?",
   whatsapp_message_fiado_a_vencer:
     "Olá [NOME], passando para lembrar que o seu fiado de [TOTAL] vence em [VENCIMENTO]. Se precisar, estamos à disposição.",
+  whatsapp_due_partial_message:
+    "Olá [NOME], passando para lembrar que o seu fiado de [TOTAL] vence em [VENCIMENTO]. Sua cobrança atual é de [COBRANCA]. Se precisar, estamos à disposição.",
+  whatsapp_overdue_partial_message:
+    "Olá [NOME], notamos que o seu fiado de [TOTAL] venceu em [VENCIMENTO]. Falta um pagamento de [COBRANCA]. Como podemos te ajudar a regularizar?",
 };
 const whatsappPreviewValues: Record<string, string> = {
   "[NOME]": "Fulano",
@@ -223,6 +246,14 @@ const whatsappPreviewVencido = computed(() =>
 
 const whatsappPreviewAVencer = computed(() =>
   buildWhatsappPreview(whatsappForm.value.whatsapp_message_fiado_a_vencer, "whatsapp_message_fiado_a_vencer"),
+);
+
+const whatsappPreviewDuePartial = computed(() =>
+  buildWhatsappPreview(whatsappForm.value.whatsapp_due_partial_message, "whatsapp_due_partial_message"),
+);
+
+const whatsappPreviewOverduePartial = computed(() =>
+  buildWhatsappPreview(whatsappForm.value.whatsapp_overdue_partial_message, "whatsapp_overdue_partial_message"),
 );
 
 const ratePreviewItems = computed(() => {
@@ -301,78 +332,7 @@ onMounted(async () => {
   await loadGeneralSettings();
   await loadPixSettings();
   await loadCardMachines();
-  window.addEventListener("keydown", handleEscapeKey);
 });
-
-onUnmounted(() => {
-  window.removeEventListener("keydown", handleEscapeKey);
-});
-
-function handleEscapeKey(event: KeyboardEvent): void {
-  if (event.key !== "Escape") {
-    return;
-  }
-
-  if (showConfirm.value) {
-    onCancel();
-    return;
-  }
-
-  if (showCardMachineModal.value && !cardMachineSubmitLoading.value) {
-    closeCardMachineModal();
-    return;
-  }
-
-  if (!showPasswordModal.value || loadingSubmit.value) {
-    return;
-  }
-
-  closePasswordModal();
-}
-
-function normalizeDigits(value: string): string {
-  return value.replace(/\D/g, "");
-}
-
-function formatCpfForInput(value: string): string {
-  const digits = normalizeDigits(value).slice(0, 11);
-
-  if (digits.length <= 3) {
-    return digits;
-  }
-
-  if (digits.length <= 6) {
-    return `${digits.slice(0, 3)}.${digits.slice(3)}`;
-  }
-
-  if (digits.length <= 9) {
-    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
-  }
-
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
-}
-
-function formatCnpjForInput(value: string): string {
-  const digits = normalizeDigits(value).slice(0, 14);
-
-  if (digits.length <= 2) {
-    return digits;
-  }
-
-  if (digits.length <= 5) {
-    return `${digits.slice(0, 2)}.${digits.slice(2)}`;
-  }
-
-  if (digits.length <= 8) {
-    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`;
-  }
-
-  if (digits.length <= 12) {
-    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8)}`;
-  }
-
-  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
-}
 
 function formatStoredPixKeyForDisplay(type: PixKeyType | "", value: string): string {
   if (type === "cpf") {
@@ -390,122 +350,6 @@ function formatStoredPixKeyForDisplay(type: PixKeyType | "", value: string): str
   return value;
 }
 
-function sanitizePixKeyInput(type: PixKeyType | "", value: string): string {
-  const trimmedValue = value.trim();
-
-  if (type === "cpf" || type === "cnpj" || type === "phone") {
-    return normalizeDigits(trimmedValue);
-  }
-
-  return trimmedValue;
-}
-
-function isValidCpf(value: string): boolean {
-  const digits = normalizeDigits(value);
-
-  if (!/^\d{11}$/.test(digits)) {
-    return false;
-  }
-
-  if (/^(\d)\1{10}$/.test(digits)) {
-    return false;
-  }
-
-  let sum = 0;
-
-  for (let index = 0; index < 9; index += 1) {
-    sum += Number(digits[index]) * (10 - index);
-  }
-
-  const firstDigit = (sum * 10) % 11;
-
-  if ((firstDigit === 10 ? 0 : firstDigit) !== Number(digits[9])) {
-    return false;
-  }
-
-  sum = 0;
-
-  for (let index = 0; index < 10; index += 1) {
-    sum += Number(digits[index]) * (11 - index);
-  }
-
-  const secondDigit = (sum * 10) % 11;
-
-  return (secondDigit === 10 ? 0 : secondDigit) === Number(digits[10]);
-}
-
-function isValidCnpj(value: string): boolean {
-  const digits = normalizeDigits(value);
-
-  if (!/^\d{14}$/.test(digits)) {
-    return false;
-  }
-
-  if (/^(\d)\1{13}$/.test(digits)) {
-    return false;
-  }
-
-  const calculateDigit = (base: string, factors: number[]): number => {
-    const total = base
-      .split("")
-      .reduce((sum, digit, index) => sum + Number(digit) * (factors[index] ?? 0), 0);
-    const remainder = total % 11;
-    return remainder < 2 ? 0 : 11 - remainder;
-  };
-
-  const firstDigit = calculateDigit(digits.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
-
-  if (firstDigit !== Number(digits[12])) {
-    return false;
-  }
-
-  const secondDigit = calculateDigit(digits.slice(0, 13), [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
-
-  return secondDigit === Number(digits[13]);
-}
-
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function isValidUuidV4(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
-}
-
-function validatePixKey(type: PixKeyType | "", rawValue: string): string[] | undefined {
-  if (!type) {
-    return ["Selecione o tipo de chave Pix."];
-  }
-
-  const normalizedValue = sanitizePixKeyInput(type, rawValue);
-
-  if (!normalizedValue) {
-    return ["Chave Pix é obrigatória."];
-  }
-
-  if (type === "cpf" && !isValidCpf(normalizedValue)) {
-    return ["Informe um CPF válido com 11 dígitos."];
-  }
-
-  if (type === "cnpj" && !isValidCnpj(normalizedValue)) {
-    return ["Informe um CNPJ válido com 14 dígitos."];
-  }
-
-  if (type === "email" && !isValidEmail(normalizedValue)) {
-    return ["Informe um e-mail válido."];
-  }
-
-  if (type === "phone" && !/^\d{11}$/.test(normalizedValue)) {
-    return ["Informe um telefone válido com DDD e 9 dígitos."];
-  }
-
-  if (type === "random" && !isValidUuidV4(normalizedValue)) {
-    return ["Informe uma chave aleatória válida no formato UUID v4."];
-  }
-
-  return undefined;
-}
-
 function handleStoreCnpjInput(event: Event): void {
   const target = event.target as HTMLInputElement;
   systemForm.value.store_cnpj = formatCnpjForInput(target.value);
@@ -521,7 +365,7 @@ function handleDiscountLimitInput(
   field: "discount_limit_daily" | "discount_limit_weekly" | "discount_limit_monthly",
 ): void {
   const target = event.target as HTMLInputElement;
-  systemForm.value[field] = toCurrencyMaskedValue(target.value);
+  systemForm.value[field] = formatCurrencyInput(target.value);
 }
 
 function handleFiadoMaxDaysInput(event: Event): void {
@@ -536,72 +380,24 @@ function handleAlertStockMinUnitsInput(event: Event): void {
 
 function handleAlertStockMinBulkKgInput(event: Event): void {
   const target = event.target as HTMLInputElement;
-  alertsForm.value.stock_alert_min_bulk_kg = toWeightMaskedValue(target.value);
+  alertsForm.value.stock_alert_min_bulk_kg = formatWeightInput(target.value);
 }
 
 function handleAlertCashRegisterInput(event: Event): void {
   const target = event.target as HTMLInputElement;
-  alertsForm.value.cash_register_alert_amount_cents = toCurrencyMaskedValue(target.value);
+  alertsForm.value.cash_register_alert_amount_cents = formatCurrencyInput(target.value);
 }
 
 function handleAlertRefundLimitInput(event: Event): void {
   const target = event.target as HTMLInputElement;
-  alertsForm.value.refund_alert_limit_cents = toCurrencyMaskedValue(target.value);
-}
-
-function toCurrencyMaskedValue(rawValue: string): string {
-  const digits = rawValue.replace(/\D/g, "");
-
-  if (!digits) {
-    return "";
-  }
-
-  return `R$ ${(Number.parseInt(digits, 10) / 100).toFixed(2)}`.replace(".", ",");
-}
-
-function toNullableCents(rawValue: string): number | undefined {
-  if (!rawValue.trim()) {
-    return undefined;
-  }
-
-  return parseCurrencyInputToCents(rawValue);
-}
-
-function toWeightMaskedValue(rawValue: string): string {
-  const digits = rawValue.replace(/\D/g, "");
-
-  if (!digits) {
-    return "";
-  }
-
-  const kilograms = Number.parseInt(digits, 10) / 1000;
-  return kilograms.toLocaleString("pt-BR", {
-    minimumFractionDigits: 3,
-    maximumFractionDigits: 3,
-  });
-}
-
-function toNullableKg(rawValue: string): number | undefined {
-  const normalized = rawValue.trim();
-
-  if (!normalized) {
-    return undefined;
-  }
-
-  const parsed = Number.parseFloat(normalized.replace(/\./g, "").replace(",", "."));
-
-  if (Number.isNaN(parsed)) {
-    return undefined;
-  }
-
-  return parsed;
+  alertsForm.value.refund_alert_limit_cents = formatCurrencyInput(target.value);
 }
 
 function handleTypeLimitInput(productTypeId: string, unit: "un" | "kg", event: Event): void {
   const target = event.target as HTMLInputElement;
 
   if (unit === "kg") {
-    alertTypeLimitForm.value[productTypeId] = toWeightMaskedValue(target.value);
+    alertTypeLimitForm.value[productTypeId] = formatWeightInput(target.value);
     return;
   }
 
@@ -689,6 +485,12 @@ function restoreWhatsappDefault(field: WhatsAppTemplateField): void {
 function getWhatsappTextarea(field: WhatsAppTemplateField): HTMLTextAreaElement | null {
   if (field === "whatsapp_message_fiado_vencido") {
     return whatsappVencidoTextarea.value;
+  }
+  if (field === "whatsapp_due_partial_message") {
+    return whatsappDuePartialTextarea.value;
+  }
+  if (field === "whatsapp_overdue_partial_message") {
+    return whatsappOverduePartialTextarea.value;
   }
 
   return whatsappAVencerTextarea.value;
@@ -812,9 +614,9 @@ async function loadGeneralSettings(): Promise<void> {
       store_address: settings.store_address || "",
       store_phone: formatPhoneForInput(settings.store_phone || ""),
       receipt_footer: settings.receipt_footer || "",
-      discount_limit_daily: settings.discount_limit_daily > 0 ? toCurrencyMaskedValue(String(settings.discount_limit_daily)) : "",
-      discount_limit_weekly: settings.discount_limit_weekly > 0 ? toCurrencyMaskedValue(String(settings.discount_limit_weekly)) : "",
-      discount_limit_monthly: settings.discount_limit_monthly > 0 ? toCurrencyMaskedValue(String(settings.discount_limit_monthly)) : "",
+      discount_limit_daily: settings.discount_limit_daily > 0 ? formatCurrencyInput(String(settings.discount_limit_daily)) : "",
+      discount_limit_weekly: settings.discount_limit_weekly > 0 ? formatCurrencyInput(String(settings.discount_limit_weekly)) : "",
+      discount_limit_monthly: settings.discount_limit_monthly > 0 ? formatCurrencyInput(String(settings.discount_limit_monthly)) : "",
     };
 
     fiadoForm.value = {
@@ -828,13 +630,17 @@ async function loadGeneralSettings(): Promise<void> {
         settings.whatsapp_message_fiado_vencido || getWhatsappDefaultMessage("whatsapp_message_fiado_vencido"),
       whatsapp_message_fiado_a_vencer:
         settings.whatsapp_message_fiado_a_vencer || getWhatsappDefaultMessage("whatsapp_message_fiado_a_vencer"),
+      whatsapp_due_partial_message:
+        settings.whatsapp_due_partial_message || getWhatsappDefaultMessage("whatsapp_due_partial_message"),
+      whatsapp_overdue_partial_message:
+        settings.whatsapp_overdue_partial_message || getWhatsappDefaultMessage("whatsapp_overdue_partial_message"),
     };
 
     alertsForm.value = {
       stock_alert_min_units: settings.stock_alert_min_units > 0 ? String(settings.stock_alert_min_units) : "",
-      stock_alert_min_bulk_kg: settings.stock_alert_min_bulk_kg > 0 ? toWeightMaskedValue(String(Math.round(settings.stock_alert_min_bulk_kg * 1000))) : "",
-      cash_register_alert_amount_cents: settings.cash_register_alert_amount_cents > 0 ? toCurrencyMaskedValue(String(settings.cash_register_alert_amount_cents)) : "",
-      refund_alert_limit_cents: settings.refund_alert_limit_cents > 0 ? toCurrencyMaskedValue(String(settings.refund_alert_limit_cents)) : "",
+      stock_alert_min_bulk_kg: settings.stock_alert_min_bulk_kg > 0 ? formatWeightInput(String(Math.round(settings.stock_alert_min_bulk_kg * 1000))) : "",
+      cash_register_alert_amount_cents: settings.cash_register_alert_amount_cents > 0 ? formatCurrencyInput(String(settings.cash_register_alert_amount_cents)) : "",
+      refund_alert_limit_cents: settings.refund_alert_limit_cents > 0 ? formatCurrencyInput(String(settings.refund_alert_limit_cents)) : "",
       fiado_alert_at_90_percent: settings.fiado_alert_at_90_percent,
       fiado_alert_on_due_day: settings.fiado_alert_on_due_day,
     };
@@ -846,7 +652,7 @@ async function loadGeneralSettings(): Promise<void> {
       const typeUnit = getTypeUnit(productTypeId);
 
       if (typeUnit === "kg") {
-        nextTypeLimits[productTypeId] = toWeightMaskedValue(String(Math.round(value * 1000)));
+        nextTypeLimits[productTypeId] = formatWeightInput(String(Math.round(value * 1000)));
         continue;
       }
 
@@ -884,9 +690,9 @@ async function saveSystemSettings(): Promise<void> {
         store_address: systemForm.value.store_address.trim(),
         store_phone: normalizeDigits(systemForm.value.store_phone),
         receipt_footer: systemForm.value.receipt_footer.trim(),
-        discount_limit_daily: toNullableCents(systemForm.value.discount_limit_daily),
-        discount_limit_weekly: toNullableCents(systemForm.value.discount_limit_weekly),
-        discount_limit_monthly: toNullableCents(systemForm.value.discount_limit_monthly),
+        discount_limit_daily: parseCurrencyInputToNullableCents(systemForm.value.discount_limit_daily) ?? undefined,
+        discount_limit_weekly: parseCurrencyInputToNullableCents(systemForm.value.discount_limit_weekly) ?? undefined,
+        discount_limit_monthly: parseCurrencyInputToNullableCents(systemForm.value.discount_limit_monthly) ?? undefined,
       }),
     });
     const data = await response.json();
@@ -960,6 +766,12 @@ async function saveWhatsappSettings(): Promise<void> {
         whatsapp_message_fiado_a_vencer:
           (whatsappForm.value.whatsapp_message_fiado_a_vencer.trim() ||
             getWhatsappDefaultMessage("whatsapp_message_fiado_a_vencer")),
+        whatsapp_due_partial_message:
+          (whatsappForm.value.whatsapp_due_partial_message.trim() ||
+            getWhatsappDefaultMessage("whatsapp_due_partial_message")),
+        whatsapp_overdue_partial_message:
+          (whatsappForm.value.whatsapp_overdue_partial_message.trim() ||
+            getWhatsappDefaultMessage("whatsapp_overdue_partial_message")),
       }),
     });
     const data = await response.json();
@@ -985,7 +797,7 @@ async function saveAlertsSettings(): Promise<void> {
   const stockMinUnits = alertsForm.value.stock_alert_min_units
     ? Number.parseInt(alertsForm.value.stock_alert_min_units, 10)
     : 0;
-  const stockMinBulkKg = toNullableKg(alertsForm.value.stock_alert_min_bulk_kg) ?? 0;
+  const stockMinBulkKg = parseWeightInputToNullableKg(alertsForm.value.stock_alert_min_bulk_kg) ?? 0;
 
   if (Number.isNaN(stockMinUnits) || stockMinUnits < 0) {
     alertsSubmitError.value = "Informe uma quantidade mínima de estoque válida.";
@@ -1011,9 +823,9 @@ async function saveAlertsSettings(): Promise<void> {
     const typeUnit = getTypeUnit(productTypeId);
 
     if (typeUnit === "kg") {
-      const parsedKg = toNullableKg(trimmed);
+      const parsedKg = parseWeightInputToNullableKg(trimmed);
 
-      if (parsedKg === undefined || Number.isNaN(parsedKg) || parsedKg < 0) {
+      if (parsedKg === null || Number.isNaN(parsedKg) || parsedKg < 0) {
         continue;
       }
 
@@ -1055,8 +867,10 @@ async function saveAlertsSettings(): Promise<void> {
       body: JSON.stringify({
         stock_alert_min_units: stockMinUnits,
         stock_alert_min_bulk_kg: stockMinBulkKg,
-        cash_register_alert_amount_cents: toNullableCents(alertsForm.value.cash_register_alert_amount_cents) ?? 0,
-        refund_alert_limit_cents: toNullableCents(alertsForm.value.refund_alert_limit_cents) ?? 50000,
+        cash_register_alert_amount_cents:
+          parseCurrencyInputToNullableCents(alertsForm.value.cash_register_alert_amount_cents) ?? 0,
+        refund_alert_limit_cents:
+          parseCurrencyInputToNullableCents(alertsForm.value.refund_alert_limit_cents) ?? 50000,
         fiado_alert_at_90_percent: alertsForm.value.fiado_alert_at_90_percent,
         fiado_alert_on_due_day: alertsForm.value.fiado_alert_on_due_day,
         ...stockTypePayload,
@@ -1165,26 +979,6 @@ function validateForm(): boolean {
   }
 
   return Object.keys(formErrors.value).length === 0;
-}
-
-function parseRateInput(value: string): number | null {
-  const normalized = value.replace(",", ".").trim();
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) {
-    return null;
-  }
-
-  const parsed = Number.parseFloat(normalized);
-
-  if (Number.isNaN(parsed) || parsed < 0 || parsed > 100) {
-    return null;
-  }
-
-  return parsed;
 }
 
 function handleRateInput(event: Event, field: keyof CardMachineFormData["rates"]): void {
@@ -1427,6 +1221,14 @@ function closePasswordModal(): void {
   passwordErrors.value = [];
   modalError.value = null;
 }
+
+useModalStack(
+  [
+    { isOpen: showCardMachineModal, close: closeCardMachineModal },
+    { isOpen: showPasswordModal, close: closePasswordModal },
+  ],
+  { listenEscape: true },
+);
 
 function showSuccessToast(message: string): void {
   toast(message);
@@ -2233,8 +2035,60 @@ function changePaymentTab(tab: PaymentTabKey): void {
             </p>
 
             <form class="mt-6 space-y-6" @submit.prevent="saveWhatsappSettings">
+              <!-- Tabs WhatsApp -->
+              <div class="flex flex-wrap gap-2 border-b border-gray-200">
+                <button
+                  type="button"
+                  :class="[
+                    'px-4 py-2 text-sm font-semibold transition border-b-2',
+                    activeWhatsappTemplate === 'whatsapp_message_fiado_vencido'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ]"
+                  @click="activeWhatsappTemplate = 'whatsapp_message_fiado_vencido'"
+                >
+                  Vencido (Total)
+                </button>
+                <button
+                  type="button"
+                  :class="[
+                    'px-4 py-2 text-sm font-semibold transition border-b-2',
+                    activeWhatsappTemplate === 'whatsapp_message_fiado_a_vencer'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ]"
+                  @click="activeWhatsappTemplate = 'whatsapp_message_fiado_a_vencer'"
+                >
+                  A Vencer (Total)
+                </button>
+                <button
+                  type="button"
+                  :class="[
+                    'px-4 py-2 text-sm font-semibold transition border-b-2',
+                    activeWhatsappTemplate === 'whatsapp_overdue_partial_message'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ]"
+                  @click="activeWhatsappTemplate = 'whatsapp_overdue_partial_message'"
+                >
+                  Vencido (Parcial)
+                </button>
+                <button
+                  type="button"
+                  :class="[
+                    'px-4 py-2 text-sm font-semibold transition border-b-2',
+                    activeWhatsappTemplate === 'whatsapp_due_partial_message'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ]"
+                  @click="activeWhatsappTemplate = 'whatsapp_due_partial_message'"
+                >
+                  A Vencer (Parcial)
+                </button>
+              </div>
+
               <div class="grid gap-4">
-                <div>
+                <div v-show="activeWhatsappTemplate === 'whatsapp_message_fiado_vencido'">
                   <div class="mb-1 flex items-center justify-between gap-3">
                     <label for="whatsapp_message_fiado_vencido" class="block text-sm font-medium text-gray-700">
                       Mensagem para fiado vencido
@@ -2276,7 +2130,7 @@ function changePaymentTab(tab: PaymentTabKey): void {
                   ></textarea>
                 </div>
 
-                <div>
+                <div v-show="activeWhatsappTemplate === 'whatsapp_message_fiado_a_vencer'">
                   <div class="mb-1 flex items-center justify-between gap-3">
                     <label for="whatsapp_message_fiado_a_vencer" class="block text-sm font-medium text-gray-700">
                       Mensagem para fiado a vencer
@@ -2318,6 +2172,90 @@ function changePaymentTab(tab: PaymentTabKey): void {
                   ></textarea>
                 </div>
 
+                <div v-show="activeWhatsappTemplate === 'whatsapp_due_partial_message'">
+                  <div class="mb-1 flex items-center justify-between gap-3">
+                    <label for="whatsapp_due_partial_message" class="block text-sm font-medium text-gray-700">
+                      Mensagem para fiado a vencer (Cobrança Parcial)
+                    </label>
+                    <span class="text-xs font-medium text-gray-500">
+                      {{ getWhatsappMessageLength('whatsapp_due_partial_message') }}/2000 caracteres
+                    </span>
+                  </div>
+                  <p class="mb-2 text-xs text-gray-500">
+                    Clique nos botões acima para incluir informações que o sistema preenche sozinho.
+                  </p>
+                  <div class="mb-3 flex flex-wrap items-center gap-2">
+                    <button
+                      v-for="button in whatsappTokenButtons"
+                      :key="`due-partial-${button.token}`"
+                      type="button"
+                      class="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                      @click="insertWhatsappToken('whatsapp_due_partial_message', button.token)"
+                    >
+                      {{ button.label }}
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+                      @click="restoreWhatsappDefault('whatsapp_due_partial_message')"
+                    >
+                      Restaurar modelo padrão
+                    </button>
+                  </div>
+                  <textarea
+                    id="whatsapp_due_partial_message"
+                    ref="whatsappDuePartialTextarea"
+                    v-model="whatsappForm.whatsapp_due_partial_message"
+                    rows="5"
+                    maxlength="2000"
+                    class="w-full rounded border border-blue-300 px-3 py-2 text-base md:text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    placeholder="Olá [NOME], passando para lembrar que o seu fiado de [TOTAL] vence em [VENCIMENTO]. Sua cobrança atual é de [COBRANCA]. Se precisar, estamos à disposição."
+                    @blur="ensureWhatsappMessageDefault('whatsapp_due_partial_message')"
+                  ></textarea>
+                </div>
+
+                <div v-show="activeWhatsappTemplate === 'whatsapp_overdue_partial_message'">
+                  <div class="mb-1 flex items-center justify-between gap-3">
+                    <label for="whatsapp_overdue_partial_message" class="block text-sm font-medium text-gray-700">
+                      Mensagem para fiado vencido (Cobrança Parcial)
+                    </label>
+                    <span class="text-xs font-medium text-gray-500">
+                      {{ getWhatsappMessageLength('whatsapp_overdue_partial_message') }}/2000 caracteres
+                    </span>
+                  </div>
+                  <p class="mb-2 text-xs text-gray-500">
+                    Clique nos botões acima para incluir informações que o sistema preenche sozinho.
+                  </p>
+                  <div class="mb-3 flex flex-wrap items-center gap-2">
+                    <button
+                      v-for="button in whatsappTokenButtons"
+                      :key="`overdue-partial-${button.token}`"
+                      type="button"
+                      class="rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 transition hover:bg-purple-100"
+                      @click="insertWhatsappToken('whatsapp_overdue_partial_message', button.token)"
+                    >
+                      {{ button.label }}
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+                      @click="restoreWhatsappDefault('whatsapp_overdue_partial_message')"
+                    >
+                      Restaurar modelo padrão
+                    </button>
+                  </div>
+                  <textarea
+                    id="whatsapp_overdue_partial_message"
+                    ref="whatsappOverduePartialTextarea"
+                    v-model="whatsappForm.whatsapp_overdue_partial_message"
+                    rows="5"
+                    maxlength="2000"
+                    class="w-full rounded border border-purple-300 px-3 py-2 text-base md:text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    placeholder="Olá [NOME], notamos que o seu fiado de [TOTAL] venceu em [VENCIMENTO]. Falta um pagamento de [COBRANCA]. Como podemos te ajudar a regularizar?"
+                    @blur="ensureWhatsappMessageDefault('whatsapp_overdue_partial_message')"
+                  ></textarea>
+                </div>
+
                 <div class="rounded-2xl border border-green-200 bg-[#e7f7eb] p-4">
                   <div class="mb-3 flex items-center gap-2 text-sm font-medium text-green-900">
                     <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-600 text-white">W</span>
@@ -2325,19 +2263,35 @@ function changePaymentTab(tab: PaymentTabKey): void {
                   </div>
 
                   <div class="space-y-4 rounded-2xl bg-[#d8f3dc] p-4">
-                    <div class="flex justify-start">
-                      <div class="max-w-[92%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm text-gray-800 shadow-sm">
+                    <div v-show="activeWhatsappTemplate === 'whatsapp_message_fiado_vencido'" class="flex justify-end">
+                      <div class="max-w-[92%] rounded-2xl rounded-tr-md bg-[#dcf8c6] px-4 py-3 text-sm text-gray-800 shadow-sm">
                         <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-red-600">Fiado vencido</p>
                         <p class="whitespace-pre-line">{{ whatsappPreviewVencido }}</p>
-                        <p class="mt-2 text-right text-[11px] text-gray-400">09:41</p>
+                        <p class="mt-2 text-right text-[11px] text-gray-500">09:41</p>
                       </div>
                     </div>
 
-                    <div class="flex justify-end">
-                      <div class="max-w-[92%] rounded-2xl rounded-br-md bg-[#dcf8c6] px-4 py-3 text-sm text-gray-800 shadow-sm">
+                    <div v-show="activeWhatsappTemplate === 'whatsapp_message_fiado_a_vencer'" class="flex justify-end">
+                      <div class="max-w-[92%] rounded-2xl rounded-tr-md bg-[#dcf8c6] px-4 py-3 text-sm text-gray-800 shadow-sm">
                         <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">Fiado a vencer</p>
                         <p class="whitespace-pre-line">{{ whatsappPreviewAVencer }}</p>
-                        <p class="mt-2 text-right text-[11px] text-gray-400">09:42</p>
+                        <p class="mt-2 text-right text-[11px] text-gray-500">09:42</p>
+                      </div>
+                    </div>
+
+                    <div v-show="activeWhatsappTemplate === 'whatsapp_overdue_partial_message'" class="flex justify-end">
+                      <div class="max-w-[92%] rounded-2xl rounded-tr-md bg-[#dcf8c6] px-4 py-3 text-sm text-gray-800 shadow-sm">
+                        <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-purple-700">Fiado vencido (Parcial)</p>
+                        <p class="whitespace-pre-line">{{ whatsappPreviewOverduePartial }}</p>
+                        <p class="mt-2 text-right text-[11px] text-gray-500">09:43</p>
+                      </div>
+                    </div>
+
+                    <div v-show="activeWhatsappTemplate === 'whatsapp_due_partial_message'" class="flex justify-end">
+                      <div class="max-w-[92%] rounded-2xl rounded-tr-md bg-[#dcf8c6] px-4 py-3 text-sm text-gray-800 shadow-sm">
+                        <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-700">Fiado a vencer (Parcial)</p>
+                        <p class="whitespace-pre-line">{{ whatsappPreviewDuePartial }}</p>
+                        <p class="mt-2 text-right text-[11px] text-gray-500">09:44</p>
                       </div>
                     </div>
                   </div>

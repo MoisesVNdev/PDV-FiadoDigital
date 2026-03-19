@@ -1,10 +1,12 @@
 import { createApp } from "./app.js";
-import { config } from "./config/index.js";
+import { assertRequiredSecrets, config } from "./config/index.js";
 import { initDatabase } from "./config/database.js";
 import { initWebSocket } from "./websocket/index.js";
 import { startCustomerDebtCheckJob } from "./jobs/customer-debt-check.job.js";
 
 async function bootstrap(): Promise<void> {
+  assertRequiredSecrets();
+
   await initDatabase();
 
   // Iniciar job de verificação de atraso de cliente

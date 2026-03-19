@@ -15,6 +15,21 @@ export type { CashRegister, OpenCashRegisterPayload } from "./cash-register.js";
 export type { Transaction } from "./transaction.js";
 export type { StockMovement, StockMovementType } from "./stock-movement.js";
 export type { AuditLog } from "./audit-log.js";
+export {
+	KNOWN_SETTING_KEYS,
+	PIX_KEY_TYPES as SETTINGS_PIX_KEY_TYPES,
+	STOCK_ALERT_TYPE_SETTING_PREFIX,
+} from "./settings.js";
+export type {
+	DynamicStockAlertSettingKey,
+	KnownSettingKey,
+	KnownSettingValueMap,
+	SettingEntry,
+	SettingKey,
+	SettingValue,
+	SettingsPixKeyType,
+	SettingsRecord,
+} from "./settings.js";
 export type { ApiResponse, PaginatedResult, PaginatedResponse } from "./api.js";
 export type {
   Notification,

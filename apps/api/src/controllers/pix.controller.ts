@@ -17,7 +17,7 @@ export class PixController {
   async getPaymentStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const txId = req.params.tx_id as string;
-      const result = pixService.getPaymentStatus(txId);
+      const result = await pixService.getPaymentStatus(txId);
       res.json({ success: true, data: result });
     } catch (error) {
       next(error);
@@ -36,7 +36,7 @@ export class PixController {
         paid_at?: Date;
       };
 
-      const result = pixService.confirmPaymentFromWebhook({
+      const result = await pixService.confirmPaymentFromWebhook({
         tx_id,
         status,
         paid_amount_cents,

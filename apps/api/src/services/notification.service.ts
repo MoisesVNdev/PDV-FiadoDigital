@@ -20,6 +20,30 @@ export class NotificationService {
     return notification;
   }
 
+  async createFiadoNotificationOncePerDay(payload: CreateNotificationPayload) {
+    const customerId = this.extractCustomerId(payload.meta);
+
+    if (!customerId) {
+      return this.create(payload);
+    }
+
+    const dedupParams = {
+      type: payload.type,
+      customer_id: customerId,
+    };
+
+    const [hasUnreadOpen, alreadyCreatedToday] = await Promise.all([
+      notificationRepository.existsUnreadByTypeAndCustomer(dedupParams),
+      notificationRepository.existsByTypeAndCustomerOnDate(dedupParams, new Date()),
+    ]);
+
+    if (hasUnreadOpen || alreadyCreatedToday) {
+      return null;
+    }
+
+    return this.create(payload);
+  }
+
   async list(params: NotificationQueryParams) {
     return notificationRepository.findAll(params);
   }
@@ -36,6 +60,10 @@ export class NotificationService {
 
   async markAllRead(userRole?: string) {
     return notificationRepository.markAllRead(userRole);
+  }
+
+  async deleteRead(userRole?: string) {
+    return notificationRepository.deleteRead(userRole);
   }
 
   async acknowledge(id: string, userId: string) {
@@ -73,5 +101,27 @@ export class NotificationService {
       .join("\n");
 
     return header + rows;
+  }
+
+  async cleanupUnreadDuplicatesByCustomerAndType(types?: readonly string[]) {
+    return notificationRepository.markOldUnreadDuplicatesAsReadByCustomerAndType(types);
+  }
+
+  private extractCustomerId(meta: string | undefined): string | null {
+    if (!meta) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(meta) as { customerId?: unknown };
+
+      if (typeof parsed.customerId !== "string" || !parsed.customerId.trim()) {
+        return null;
+      }
+
+      return parsed.customerId;
+    } catch {
+      return null;
+    }
   }
 }

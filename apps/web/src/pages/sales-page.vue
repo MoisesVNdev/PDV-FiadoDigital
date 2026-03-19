@@ -19,6 +19,8 @@ import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import { useApi } from "@/composables/use-api.js";
 import { useConfirm } from "@/composables/use-confirm.js";
 import { useFormatting } from "@/composables/use-formatting.js";
+import { useModalStack } from "@/composables/use-modal-stack.js";
+import { useSaleDomain } from "@/composables/use-sale-domain.js";
 import { useSaleCalculator } from "@/composables/use-sale-calculator.js";
 import { useWebSocket } from "@/composables/use-websocket.js";
 import { useAuthStore } from "@/stores/auth.store.js";
@@ -48,6 +50,7 @@ const {
   formatCurrencyInput: toCurrencyMaskedValue,
 } = useFormatting();
 const { calcCardRate, applyCardFee, calcChange, validateFiadoCredit, buildSalePayload } = useSaleCalculator();
+const { resolvePaymentMethod, requestReceiptPrint } = useSaleDomain();
 const authStore = useAuthStore();
 const saleStore = useSaleStore();
 const { isConnected, connectionWarning: wsConnectionWarning, lastMessage } = useWebSocket();
@@ -159,6 +162,7 @@ const movementLoading = ref(false);
 const movementError = ref<string | null>(null);
 
 const stockAlertToasts = ref<Array<{ id: string; message: string; productId: string }>>([]);
+const printFallbackMessage = ref<string | null>(null);
 
 const INACTIVE_CUSTOMER_SEARCH_MESSAGE =
   "Cliente inativo. Não é possível vinculá-lo a uma venda.";
@@ -616,7 +620,7 @@ function handleOnlineStatus(): void {
 
 function removeStockAlertToast(toastId: string): void {
   const index = stockAlertToasts.value.findIndex((toast) => toast.id === toastId);
-  
+
   if (index !== -1) {
     stockAlertToasts.value.splice(index, 1);
   }
@@ -1339,7 +1343,7 @@ function removeItemWithApproval(productId: string): void {
 
 function incrementItemQuantity(productId: string): void {
   const item = saleStore.items.find((i) => i.product_id === productId);
-  
+
   if (!item) {
     return;
   }
@@ -1359,7 +1363,7 @@ function incrementItemQuantity(productId: string): void {
 
 function decrementItemQuantity(productId: string): void {
   const item = saleStore.items.find((i) => i.product_id === productId);
-  
+
   if (!item) {
     return;
   }
@@ -1471,6 +1475,30 @@ function closeTopModal(): void {
     closeCashMovementModal();
   }
 }
+
+useModalStack(
+  [
+    { isOpen: showOpenCashModal, close: () => { showOpenCashModal.value = false; } },
+    { isOpen: showManagerPinModal, close: () => { showManagerPinModal.value = false; } },
+    { isOpen: showWeightModal, close: () => { showWeightModal.value = false; } },
+    { isOpen: showProductSearchModal, close: () => { showProductSearchModal.value = false; } },
+    {
+      isOpen: showPaymentModal,
+      close: () => {
+        showPaymentModal.value = false;
+        paymentError.value = null;
+        paymentSuccess.value = false;
+      },
+    },
+    { isOpen: showPixQRCodeModal, close: closePixQRCodeModal },
+    { isOpen: showPixManualConfirmModal, close: closePixManualConfirmModal },
+    { isOpen: showCashOutModal, close: closeCashMovementModal },
+    { isOpen: showCashInModal, close: closeCashMovementModal },
+    { isOpen: showCustomerListModal, close: () => { showCustomerListModal.value = false; } },
+    { isOpen: showCameraScanner, close: closeCameraScanner },
+  ],
+  { listenEscape: false },
+);
 
 function handleWeightedInputKeydown(event: KeyboardEvent): void {
   if (event.key >= "0" && event.key <= "9") {
@@ -1648,8 +1676,7 @@ async function confirmPayment(): Promise<void> {
       return;
     }
 
-    const uniqueMethods = Array.from(new Set(paymentRows.value.map((row) => row.method)));
-    const paymentMethod = (uniqueMethods.length > 1 ? PAYMENT_METHODS.MIXED : uniqueMethods[0]) as string;
+    const paymentMethod = resolvePaymentMethod(paymentRows.value, PAYMENT_METHODS.MIXED);
     const finalTotalCents = totalWithFeesCents.value;
 
     const operatorId = authStore.user?.id;
@@ -1691,10 +1718,13 @@ async function confirmPayment(): Promise<void> {
     updateFinalizedPaymentSummary();
     paymentSuccess.value = true;
 
-    await requestReceiptPrint({
-      sale_id: data.data?.id,
-      terminal_id: terminalId.value,
-    });
+    await requestReceiptPrint(
+      {
+        sale_id: data.data?.id,
+        terminal_id: terminalId.value,
+      },
+      showPrintFallback,
+    );
 
     resetSaleState();
   } catch {
@@ -1902,8 +1932,7 @@ async function confirmPixReceived(source: "manual" | "automatic" = "manual"): Pr
 
   try {
     // Agora finalizar a venda normalmente
-    const uniqueMethods = Array.from(new Set(paymentRows.value.map((row) => row.method)));
-    const paymentMethod = (uniqueMethods.length > 1 ? PAYMENT_METHODS.MIXED : uniqueMethods[0]) as string;
+    const paymentMethod = resolvePaymentMethod(paymentRows.value, PAYMENT_METHODS.MIXED);
     const finalTotalCents = totalWithFeesCents.value;
 
     const operatorId = authStore.user?.id;
@@ -1946,10 +1975,13 @@ async function confirmPixReceived(source: "manual" | "automatic" = "manual"): Pr
     updateFinalizedPaymentSummary();
     paymentSuccess.value = true;
 
-    await requestReceiptPrint({
-      sale_id: data.data?.id,
-      terminal_id: terminalId.value,
-    });
+    await requestReceiptPrint(
+      {
+        sale_id: data.data?.id,
+        terminal_id: terminalId.value,
+      },
+      showPrintFallback,
+    );
 
     stopPixQRCodeCountdown();
     stopPixStatusPolling();
@@ -1979,22 +2011,12 @@ function closePixQRCodeModal(): void {
   pixStatusLabel.value = "Aguardando confirmação do Pix...";
 }
 
-async function requestReceiptPrint(payload: Record<string, unknown>): Promise<void> {
-  try {
-    const response = await authenticatedFetch("/api/print/receipt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+function showPrintFallback(message: string): void {
+  printFallbackMessage.value = message;
 
-    if (response.ok) {
-      return;
-    }
-  } catch {
-    // fallback no bloco abaixo
-  }
-
-  window.print();
+  setTimeout(() => {
+    printFallbackMessage.value = null;
+  }, 5000);
 }
 
 function openCashOutModal(): void {
@@ -2052,13 +2074,16 @@ async function submitCashMovement(type: "cash-out" | "cash-in"): Promise<void> {
       return;
     }
 
-    await requestReceiptPrint({
-      terminal_id: terminalId.value,
-      cash_register_id: openCashRegister.value.id,
-      movement_type: type,
-      amount_cents: amountCents,
-      description: movementDescription.value,
-    });
+    await requestReceiptPrint(
+      {
+        terminal_id: terminalId.value,
+        cash_register_id: openCashRegister.value.id,
+        movement_type: type,
+        amount_cents: amountCents,
+        description: movementDescription.value,
+      },
+      showPrintFallback,
+    );
 
     closeCashMovementModal();
   } catch {
@@ -2195,7 +2220,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     <AppSidebar />
     <div class="flex flex-1 flex-col">
       <AppHeader />
-      
+
       <!-- Toasts de alerta de estoque -->
       <div class="fixed right-4 top-20 z-50 space-y-2">
         <div
@@ -2285,6 +2310,10 @@ function captureScannerInput(event: KeyboardEvent): boolean {
           {{ wsConnectionWarning }}
         </p>
 
+        <p v-if="printFallbackMessage" class="mb-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800" role="status" aria-live="polite">
+          {{ printFallbackMessage }}
+        </p>
+
         <div v-if="isCheckingCashRegister" class="rounded-xl border border-slate-200 bg-white p-6 text-slate-700">
           Validando caixa aberto para o terminal...
         </div>
@@ -2337,7 +2366,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                         class="mx-1 inline-block"
                         :class="showCustomerDebt ? '' : 'blur-sm select-none'"
                       >
-                        {{ formatCents(selectedCustomer.current_debt_cents) }}
+                        {{ formatCents(Math.max(0, selectedCustomer.credit_limit_cents - selectedCustomer.current_debt_cents)) }}
                       </span>
                       <button
                         type="button"
@@ -2371,7 +2400,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                   v-model="productEntryInput"
                   type="text"
                   autofocus
-                  placeholder="Código de barras ou quantidade*código"
+                  placeholder="Código de barras"
                   class="h-12 flex-1 rounded-md border border-slate-300 px-3 text-base outline-none focus:border-blue-500"
                   @keydown.enter.prevent="handleProductEntry"
                 />
@@ -3144,7 +3173,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
 
             <div class="rounded-lg border border-amber-200 bg-amber-50 p-3">
               <p class="text-sm text-amber-800">
-                Validade: 
+                Validade:
                 <strong>{{ pixQRCodeTimeoutFormatted }}</strong>
               </p>
               <p class="mt-1 text-sm text-amber-800">
@@ -3321,7 +3350,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
         />
 
         <p v-if="customerListError" class="mt-2 text-sm text-red-700">{{ customerListError }}</p>
-        
+
         <div v-if="loadingCustomers" class="mt-4 text-center text-sm text-slate-500">
           Carregando clientes...
         </div>
@@ -3345,7 +3374,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               </span>
             </div>
             <span class="text-xs text-slate-600">
-              Saldo: {{ formatCents(customer.current_debt_cents) }}
+              Saldo: {{ formatCents(Math.max(0, customer.credit_limit_cents - customer.current_debt_cents)) }}
             </span>
           </button>
         </div>

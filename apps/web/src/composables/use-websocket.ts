@@ -24,6 +24,7 @@ export function useWebSocket() {
       retryCount: 0,
       shouldReconnect: true,
       subscribers: 0,
+      isConnecting: false,
     };
   }
 
@@ -37,6 +38,7 @@ export function useWebSocket() {
     retryCount: number;
     shouldReconnect: boolean;
     subscribers: number;
+    isConnecting: boolean;
   };
 
   function clearRetryTimeout(): void {
@@ -48,26 +50,79 @@ export function useWebSocket() {
     sharedState.retryTimeout = null;
   }
 
-  function connect(): void {
-    if (!sharedState.shouldReconnect) {
+  async function requestWsToken(accessToken: string): Promise<string | null> {
+    try {
+      const response = await fetch("/api/auth/ws-token", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const payload = await response.json();
+      const wsToken = payload?.data?.ws_token;
+
+      if (typeof wsToken !== "string" || !wsToken.trim()) {
+        return null;
+      }
+
+      return wsToken;
+    } catch {
+      return null;
+    }
+  }
+
+  async function connect(): Promise<void> {
+    if (!sharedState.shouldReconnect || sharedState.isConnecting) {
       return;
     }
 
-    const token = authStore.accessToken;
+    if (sharedState.socket && sharedState.socket.readyState === WebSocket.OPEN) {
+      return;
+    }
 
-    if (!token) {
+    sharedState.isConnecting = true;
+
+    let accessToken = authStore.accessToken;
+
+    if (!accessToken) {
+      const restored = await authStore.tryRestoreAuth();
+
+      if (restored) {
+        accessToken = authStore.accessToken;
+      }
+    }
+
+    if (!accessToken) {
       sharedState.isConnected.value = false;
       sharedState.isOnline.value = false;
+      sharedState.isConnecting = false;
+      scheduleReconnect();
+      return;
+    }
+
+    const wsToken = await requestWsToken(accessToken);
+
+    if (!wsToken) {
+      sharedState.isConnected.value = false;
+      sharedState.isOnline.value = false;
+      sharedState.isConnecting = false;
       scheduleReconnect();
       return;
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+    const url = `${protocol}//${window.location.host}/ws?ws_token=${encodeURIComponent(wsToken)}`;
 
     sharedState.socket = new WebSocket(url);
 
     sharedState.socket.onopen = () => {
+      sharedState.isConnecting = false;
       sharedState.isConnected.value = true;
       sharedState.isOnline.value = true;
       sharedState.connectionWarning.value = null;
@@ -84,12 +139,15 @@ export function useWebSocket() {
     };
 
     sharedState.socket.onclose = () => {
+      sharedState.isConnecting = false;
       sharedState.isConnected.value = false;
       sharedState.isOnline.value = false;
+      sharedState.socket = null;
       scheduleReconnect();
     };
 
     sharedState.socket.onerror = () => {
+      sharedState.isConnecting = false;
       sharedState.isOnline.value = false;
       sharedState.socket?.close();
     };
@@ -114,7 +172,7 @@ export function useWebSocket() {
 
     sharedState.retryTimeout = setTimeout(() => {
       sharedState.retryTimeout = null;
-      connect();
+      void connect();
     }, retryDelay);
   }
 
@@ -122,6 +180,7 @@ export function useWebSocket() {
     sharedState.shouldReconnect = false;
     clearRetryTimeout();
     sharedState.retryCount = 0;
+    sharedState.isConnecting = false;
     sharedState.socket?.close();
     sharedState.socket = null;
     sharedState.isConnected.value = false;
@@ -131,7 +190,7 @@ export function useWebSocket() {
   onMounted(() => {
     sharedState.subscribers += 1;
     sharedState.shouldReconnect = true;
-    connect();
+    void connect();
   });
 
   onUnmounted(() => {
