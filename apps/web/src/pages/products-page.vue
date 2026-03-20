@@ -833,7 +833,7 @@ function validateProductForm(): boolean {
   }
 
   if (!isProductEditMode.value) {
-    const initialQuantity = Number.parseFloat(data.stock_quantity.replace(",", "."));
+    const initialQuantity = Number.parseFloat(String(data.stock_quantity).replace(",", "."));
 
     if (Number.isNaN(initialQuantity) || initialQuantity < 0) {
       productFormErrors.value.stock_quantity = ["Quantidade inicial deve ser não-negativa"];
@@ -905,7 +905,7 @@ async function submitProductForm(): Promise<void> {
   }
 
   if (!isProductEditMode.value) {
-    payload.stock_quantity = Number.parseFloat(productFormData.value.stock_quantity.replace(",", "."));
+    payload.stock_quantity = Number.parseFloat(String(productFormData.value.stock_quantity).replace(",", "."));
   }
 
   try {
@@ -1498,12 +1498,10 @@ async function submitSinglePrice(): Promise<void> {
     <div class="flex flex-1 flex-col">
       <AppHeader />
       <main class="flex-1 p-6">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <h1 class="text-3xl font-bold text-gray-900">Gerenciamento de Produtos</h1>
-        </div>
+
 
         <div class="mt-6 -mx-3 overflow-x-auto px-3 md:mx-0 md:px-0">
-          <div class="mb-6 flex min-w-max gap-1 border-b border-gray-200 md:min-w-0">
+          <div class="mb-6 flex min-w-max gap-1 border-b border-gray-200">
             <button
               type="button"
               class="-mb-px min-h-11 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition-colors"
@@ -2148,7 +2146,7 @@ async function submitSinglePrice(): Promise<void> {
           <div class="absolute inset-0 bg-black/50" @click="closeProductModal" />
           <div
             ref="productModalScrollableRef"
-            class="relative z-10 w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-2xl sm:rounded-2xl"
+            class="relative z-10 w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-2xl sm:rounded-2xl"
           >
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden" />
             <div class="p-4 sm:p-6">
@@ -2444,7 +2442,7 @@ async function submitSinglePrice(): Promise<void> {
           aria-labelledby="product-stock-modal-title"
         >
           <div class="absolute inset-0 bg-black/50" @click="closeStockModal" />
-          <div class="relative z-10 w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-xl sm:rounded-2xl">
+          <div class="relative z-10 w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-xl sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden" />
             <div class="p-4 sm:p-6">
             <div class="mb-4 flex items-center justify-between">
@@ -2631,7 +2629,7 @@ async function submitSinglePrice(): Promise<void> {
           aria-labelledby="product-type-modal-title"
         >
           <div class="absolute inset-0 bg-black/50" @click="closeProductTypeModal" />
-          <div class="relative z-10 w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl">
+          <div class="relative z-10 w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden" />
             <div class="p-4 sm:p-6">
             <div class="mb-4 flex items-center justify-between">
@@ -2736,7 +2734,7 @@ async function submitSinglePrice(): Promise<void> {
           aria-labelledby="product-bulk-price-modal-title"
         >
           <div class="absolute inset-0 bg-black/50" @click="closeBulkPriceModal" />
-          <div class="relative z-10 w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-xl sm:rounded-2xl">
+          <div class="relative z-10 w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-xl sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden" />
             <div class="p-4 sm:p-6">
             <div class="mb-4 flex items-center justify-between">
@@ -2869,7 +2867,7 @@ async function submitSinglePrice(): Promise<void> {
           aria-labelledby="product-single-price-modal-title"
         >
           <div class="absolute inset-0 bg-black/50" @click="closeSinglePriceModal" />
-          <div class="relative z-10 w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl">
+          <div class="relative z-10 w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden" />
             <div class="p-4 sm:p-6">
             <div class="mb-4 flex items-center justify-between">

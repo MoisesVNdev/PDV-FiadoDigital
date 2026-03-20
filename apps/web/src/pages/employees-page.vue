@@ -321,8 +321,7 @@ async function toggleStatus(employee: Employee): Promise<void> {
     <div class="flex flex-1 flex-col">
       <AppHeader />
       <main class="flex-1 p-6">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h1 class="text-2xl font-bold text-gray-900 sm:text-3xl">Funcionários</h1>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
           <button
             @click="openCreateModal"
             class="min-h-11 w-full rounded-lg bg-primary px-4 text-sm font-medium text-white transition hover:bg-primary-dark sm:w-auto"

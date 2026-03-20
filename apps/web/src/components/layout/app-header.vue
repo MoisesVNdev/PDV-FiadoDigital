@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed, ref, onMounted, onUnmounted, watch } from "vue";
+import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth.store.js";
 import { useWebSocket } from "@/composables/use-websocket.js";
 import { useLayoutState } from "@/composables/use-layout-state.js";
@@ -11,6 +11,8 @@ import type { Notification } from "@pdv/shared";
 const auth = useAuthStore();
 const { logout } = useAuth();
 const router = useRouter();
+const route = useRoute();
+const pageTitle = computed(() => route.meta.title as string || "");
 const loggingOut = ref(false);
 const { isOnline } = useWebSocket();
 const { openMobileMenu } = useLayoutState();
@@ -119,11 +121,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="flex flex-wrap items-center justify-between gap-3 border-b bg-white px-4 py-3 shadow-sm md:px-6">
-    <div class="flex items-center gap-2">
+  <header class="relative flex flex-wrap items-center justify-between gap-3 border-b bg-white px-4 py-3 shadow-sm md:px-6">
+    <div class="flex items-center gap-2 lg:w-1/3">
       <button
         type="button"
-        class="md:hidden min-h-11 min-w-11 flex items-center justify-center rounded-lg border border-gray-300 text-gray-700 transition hover:bg-gray-50 active:bg-gray-200"
+        class="2xl:hidden min-h-11 min-w-11 flex items-center justify-center rounded-lg border border-gray-300 text-gray-700 transition hover:bg-gray-50 active:bg-gray-200"
         aria-label="Abrir menu de navegação"
         @click="openMobileMenu"
       >
@@ -132,7 +134,11 @@ onUnmounted(() => {
       <span class="text-lg font-semibold text-primary">PDV FiadoDigital</span>
     </div>
 
-    <div class="flex items-center gap-3 md:gap-4">
+    <div v-if="pageTitle" class="hidden flex-1 justify-center text-center lg:flex flex-row lg:w-1/3">
+      <h1 class="text-xl font-bold text-gray-800">{{ pageTitle }}</h1>
+    </div>
+
+    <div class="flex flex-1 justify-end items-center gap-3 md:gap-4 lg:w-1/3 lg:flex-none">
       <div
         v-if="!isOnline"
         role="status"

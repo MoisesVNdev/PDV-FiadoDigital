@@ -692,10 +692,7 @@ async function loadCancellations(): Promise<void> {
       <AppHeader />
 
       <main class="flex-1 p-3 sm:p-6">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 class="text-2xl font-bold text-gray-900 sm:text-3xl">Controle</h1>
-          </div>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
 
           <div class="flex items-center gap-2">
             <button
@@ -710,7 +707,7 @@ async function loadCancellations(): Promise<void> {
         </div>
 
         <div class="mt-6 overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0">
-          <div class="flex min-w-max gap-1 border-b border-gray-200 md:min-w-0">
+          <div class="flex min-w-max gap-1 border-b border-gray-200">
             <button
               type="button"
               :class="[
@@ -1231,7 +1228,7 @@ async function loadCancellations(): Promise<void> {
       aria-labelledby="stock-history-modal-title"
       @click.self="closeHistoryModal"
     >
-      <div class="relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:max-w-5xl sm:rounded-2xl">
+      <div class="relative flex max-h-[85vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:max-w-5xl sm:rounded-2xl">
         <div class="mx-auto mt-3 h-1 w-12 shrink-0 rounded-full bg-gray-200 sm:hidden" aria-hidden="true" />
 
         <header class="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-4 sm:px-6">
@@ -1362,7 +1359,7 @@ async function loadCancellations(): Promise<void> {
       aria-labelledby="stock-adjustment-modal-title"
       @click.self="closeAdjustmentModal"
     >
-      <div class="relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl">
+      <div class="relative flex max-h-[85vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:max-w-lg sm:rounded-2xl">
         <div class="mx-auto mt-3 h-1 w-12 shrink-0 rounded-full bg-gray-200 sm:hidden" aria-hidden="true" />
 
         <header class="flex items-center justify-between border-b border-gray-200 px-4 py-4 sm:px-6">

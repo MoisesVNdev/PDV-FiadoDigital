@@ -1250,13 +1250,11 @@ function submitWhatsAppForm(): void {
     <div class="flex flex-1 flex-col">
       <AppHeader />
       <main class="flex-1 p-6">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <h1 class="text-3xl font-bold text-gray-900">Clientes</h1>
-        </div>
+
 
         <!-- Tabs -->
         <div class="mt-6 -mx-3 overflow-x-auto px-3 md:mx-0 md:px-0">
-          <div class="flex min-w-max gap-1 border-b border-gray-200 md:min-w-0">
+          <div class="flex min-w-max gap-1 border-b border-gray-200">
             <button
               type="button"
               :class="[
@@ -2378,7 +2376,7 @@ function submitWhatsAppForm(): void {
           aria-labelledby="customer-receipt-modal-title"
         >
           <div class="absolute inset-0 bg-black/50" @click="closeReceiptModal"></div>
-          <div class="relative w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-md sm:rounded-2xl">
+          <div class="relative w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-md sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden"></div>
             <div class="p-4 sm:p-6">
             <div class="mb-4 flex items-center justify-between">
@@ -2507,7 +2505,7 @@ function submitWhatsAppForm(): void {
           aria-labelledby="customer-whatsapp-modal-title"
         >
           <div class="absolute inset-0 bg-black/50" @click="closeWhatsAppModal"></div>
-          <div class="relative w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-md sm:rounded-2xl">
+          <div class="relative w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-md sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden"></div>
             <div class="p-4 sm:p-6">
               <div class="mb-4 flex items-center justify-between">
@@ -2631,7 +2629,7 @@ function submitWhatsAppForm(): void {
           aria-labelledby="customer-payment-modal-title"
         >
           <div class="absolute inset-0 bg-black/50" @click="closePaymentModal"></div>
-          <div class="relative w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-md sm:rounded-2xl">
+          <div class="relative w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-md sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden"></div>
             <div class="p-4 sm:p-6">
             <div class="mb-4 flex items-center justify-between">
@@ -2763,7 +2761,7 @@ function submitWhatsAppForm(): void {
           aria-labelledby="customer-form-modal-title"
         >
           <div class="absolute inset-0 bg-black/50" @click="closeModal"></div>
-          <div class="relative w-full max-h-[92vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-md sm:rounded-2xl">
+          <div class="relative w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:mx-auto sm:max-w-md sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden"></div>
             <div class="p-4 sm:p-6">
             <div class="mb-4 flex items-center justify-between">

@@ -59,7 +59,6 @@ const terminalId = ref(localStorage.getItem("pdv_terminal_id") || "PDV-01");
 
 const { showConfirm, confirmTitle, confirmMessage, confirmLabel, confirm, onConfirm, onCancel } = useConfirm();
 const pixCopied = ref(false);
-const showHotkeys = ref(false);
 const isPanelCollapsed = ref(true);
 
 if (!localStorage.getItem("pdv_terminal_id")) {
@@ -100,6 +99,7 @@ let codeReader: BrowserMultiFormatReader | null = null;
 let scannerControls: Awaited<ReturnType<BrowserMultiFormatReader["decodeFromVideoDevice"]>> | null = null;
 
 const selectedItemProductId = ref<string | null>(null);
+const selectedIndex = ref(-1);
 
 const showChangeDiscountInput = ref(false);
 const changeDiscountInput = ref("");
@@ -120,6 +120,12 @@ const weightedModalError = ref<string | null>(null);
 
 const showProductSearchModal = ref(false);
 const productSearchInput = ref("");
+const productSearchInputRef = ref<HTMLInputElement | null>(null);
+const showHelpModal = ref(false);
+const showQuantityModal = ref(false);
+const lastAddedProduct = ref<any>(null);
+const newQuantityInput = ref<number | "">("");
+const lastAddedProductError = ref<string | null>(null);
 const productSearchResults = ref<Product[]>([]);
 const loadingAllProducts = ref(false);
 const productSearchError = ref<string | null>(null);
@@ -806,6 +812,15 @@ async function focusWeightedInput(): Promise<void> {
 function handlePaymentRowCurrencyInput(event: Event, row: PaymentEntry): void {
   const target = event.target as HTMLInputElement;
   row.amountInput = toCurrencyMaskedValue(target.value);
+
+  if (paymentRows.value.length === 2) {
+    const otherRow = paymentRows.value.find((r) => r !== row);
+    if (otherRow) {
+      const currentCents = parseCurrencyInputToCents(row.amountInput);
+      const remainingCents = Math.max(0, totalWithFeesCents.value - currentCents);
+      otherRow.amountInput = formatCents(remainingCents);
+    }
+  }
 }
 
 function isCardMethod(method: PaymentMethod): boolean {
@@ -1204,7 +1219,7 @@ async function handleProductEntry(): Promise<void> {
       return;
     }
 
-    if (product.is_bulk || product.weight_unit === "kg" || product.weight_unit === "g") {
+    if (product.is_bulk) {
       weightedProduct.value = product;
       rawWeight.value = 0;
       weightedModalError.value = null;
@@ -1261,6 +1276,17 @@ async function findProduct(code: string): Promise<Product | null> {
   return byIdData.data as Product;
 }
 
+function formatSaleItemName(product: any): string {
+  const parts = [product.name];
+  if (product.brand?.name) {
+    parts.push(product.brand.name);
+  }
+  if (product.weight_value) {
+    parts.push(`${product.weight_value}${product.weight_unit || ''}`);
+  }
+  return parts.join(" ");
+}
+
 function addProductToCart(product: Product, quantity: number): void {
   // Verificar estoque disponível
   const existingItem = saleStore.items.find((i) => i.product_id === product.id);
@@ -1274,7 +1300,7 @@ function addProductToCart(product: Product, quantity: number): void {
 
   saleStore.addItem({
     product_id: product.id,
-    product_name: product.name,
+    product_name: formatSaleItemName(product),
     product_barcode: product.barcode,
     product_description: product.description,
     quantity,
@@ -1341,43 +1367,46 @@ function removeItemWithApproval(productId: string): void {
   requestManagerPin({ action: "remove-item", productId });
 }
 
+
 function incrementItemQuantity(productId: string): void {
   const item = saleStore.items.find((i) => i.product_id === productId);
-
-  if (!item) {
-    return;
-  }
-
-  if (item.is_bulk) {
-    return;
-  }
-
-  // Validar estoque disponível
+  if (!item || item.is_bulk) return;
   if (item.quantity + 1 > item.stock_quantity) {
-    productMessage.value = `Estoque insuficiente. Disponível: ${formatStockQuantity(item.stock_quantity, item.is_bulk ?? false)}.`;
+    productMessage.value = `Estoque insuficiente. Disponível: ${formatStockQuantity(item.stock_quantity, false)}.`;
     return;
   }
-
   saleStore.updateItemQuantity(productId, item.quantity + 1);
 }
 
 function decrementItemQuantity(productId: string): void {
   const item = saleStore.items.find((i) => i.product_id === productId);
-
-  if (!item) {
-    return;
-  }
-
-  if (item.is_bulk) {
-    return;
-  }
-
+  if (!item || item.is_bulk) return;
   if (item.quantity <= 1) {
     requestManagerPin({ action: "remove-item", productId });
     return;
   }
-
   saleStore.updateItemQuantity(productId, item.quantity - 1);
+}
+
+function confirmQuantityChange(): void {
+  if (!lastAddedProduct.value) {
+    return;
+  }
+  
+  const qty = typeof newQuantityInput.value === "string" ? parseFloat(newQuantityInput.value) : newQuantityInput.value;
+  
+  if (isNaN(qty) || qty <= 0) {
+    lastAddedProductError.value = "Quantidade inválida.";
+    return;
+  }
+
+  if (qty > lastAddedProduct.value.stock_quantity) {
+    lastAddedProductError.value = `Estoque insuficiente. Disponível: ${formatStockQuantity(lastAddedProduct.value.stock_quantity, lastAddedProduct.value.is_bulk ?? false)}.`;
+    return;
+  }
+
+  saleStore.updateItemQuantity(lastAddedProduct.value.product_id, qty);
+  showQuantityModal.value = false;
 }
 
 async function cancelSaleWithApproval(): Promise<void> {
@@ -1404,6 +1433,10 @@ function openProductSearchModal(): void {
   productSearchResults.value = [];
   productSearchError.value = null;
   loadingAllProducts.value = false;
+
+  nextTick(() => {
+    productSearchInputRef.value?.focus();
+  });
 }
 
 async function searchProductsServer(query: string): Promise<void> {
@@ -1430,7 +1463,7 @@ async function searchProductsServer(query: string): Promise<void> {
 }
 
 function selectProductFromSearch(product: Product): void {
-  if (product.is_bulk || product.weight_unit === "kg" || product.weight_unit === "g") {
+  if (product.is_bulk) {
     weightedProduct.value = product;
     rawWeight.value = 0;
     weightedModalError.value = null;
@@ -1478,6 +1511,8 @@ function closeTopModal(): void {
 
 useModalStack(
   [
+    { isOpen: showHelpModal, close: () => { showHelpModal.value = false; } },
+    { isOpen: showQuantityModal, close: () => { showQuantityModal.value = false; } },
     { isOpen: showOpenCashModal, close: () => { showOpenCashModal.value = false; } },
     { isOpen: showManagerPinModal, close: () => { showManagerPinModal.value = false; } },
     { isOpen: showWeightModal, close: () => { showWeightModal.value = false; } },
@@ -1554,7 +1589,7 @@ function confirmWeightedItem(): void {
   if (weightedProduct.value.is_bulk) {
     saleStore.addItem({
       product_id: weightedProduct.value.id,
-      product_name: weightedProduct.value.name,
+      product_name: formatSaleItemName(weightedProduct.value),
       product_barcode: weightedProduct.value.barcode,
       product_description: weightedProduct.value.description,
       quantity: weightInKg,
@@ -1567,7 +1602,7 @@ function confirmWeightedItem(): void {
   } else {
     saleStore.addItem({
       product_id: weightedProduct.value.id,
-      product_name: `${weightedProduct.value.name} (${weightInKg.toFixed(3).replace(".", ",")} kg)`,
+      product_name: formatSaleItemName(weightedProduct.value),
       product_barcode: weightedProduct.value.barcode,
       product_description: weightedProduct.value.description,
       quantity: 1,
@@ -2114,6 +2149,12 @@ const printReceiptNumber = computed(() => {
 const printDateTime = computed(() => formatDateTime(now.value));
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
+  if (event.key === "F1") {
+    event.preventDefault();
+    showHelpModal.value = !showHelpModal.value;
+    return;
+  }
+
   if (captureScannerInput(event)) {
     return;
   }
@@ -2163,7 +2204,59 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
 
   if (event.key === "F9") {
     event.preventDefault();
-    cancelSaleWithApproval();
+    if (saleStore.items.length > 0) {
+      const lastItem = saleStore.items[saleStore.items.length - 1];
+      if (lastItem && !lastItem.is_bulk) {
+        lastAddedProduct.value = lastItem;
+        newQuantityInput.value = lastItem.quantity;
+        lastAddedProductError.value = null;
+        showQuantityModal.value = true;
+      }
+    }
+  }
+  const target = event.target as HTMLElement | null;
+  const isTyping = target && ["input", "textarea", "select"].includes((target.tagName || "").toLowerCase());
+
+  if (!isTyping) {
+    if (event.key === "ArrowUp") {
+      if (saleStore.items.length > 0) {
+        event.preventDefault();
+        selectedIndex.value = Math.max(0, selectedIndex.value - 1);
+      }
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      if (saleStore.items.length > 0) {
+        event.preventDefault();
+        selectedIndex.value = selectedIndex.value === -1 ? 0 : Math.min(saleStore.items.length - 1, selectedIndex.value + 1);
+      }
+      return;
+    }
+
+    if (event.key === "+" || event.key === "Add") {
+      if (selectedIndex.value >= 0 && selectedIndex.value < saleStore.items.length) {
+        event.preventDefault();
+        incrementItemQuantity(saleStore.items[selectedIndex.value]!.product_id);
+      }
+      return;
+    }
+
+    if (event.key === "-" || event.key === "Subtract") {
+      if (selectedIndex.value >= 0 && selectedIndex.value < saleStore.items.length) {
+        event.preventDefault();
+        decrementItemQuantity(saleStore.items[selectedIndex.value]!.product_id);
+      }
+      return;
+    }
+
+    if (event.key === "Delete") {
+      if (selectedIndex.value >= 0 && selectedIndex.value < saleStore.items.length) {
+        event.preventDefault();
+        removeItemWithApproval(saleStore.items[selectedIndex.value]!.product_id);
+      }
+      return;
+    }
   }
 }
 
@@ -2216,9 +2309,9 @@ function captureScannerInput(event: KeyboardEvent): boolean {
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-surface print:hidden">
+  <div class="flex h-screen overflow-hidden bg-surface print:hidden">
     <AppSidebar />
-    <div class="flex flex-1 flex-col">
+    <div class="flex flex-1 flex-col overflow-hidden">
       <AppHeader />
 
       <!-- Toasts de alerta de estoque -->
@@ -2246,9 +2339,9 @@ function captureScannerInput(event: KeyboardEvent): boolean {
         </div>
       </div>
 
-      <main class="flex-1 p-4 md:p-6">
+      <main class="flex-1 flex flex-col min-h-0 overflow-hidden p-2 md:p-3 pb-0 md:pb-0">
         <section
-          class="sticky top-0 z-20 mb-4 rounded-xl border border-slate-200 bg-white shadow-sm md:grid md:grid-cols-5 md:gap-3 md:p-3"
+          class="sticky top-0 z-20 mb-2 rounded-xl border border-slate-200 bg-white shadow-sm md:grid md:grid-cols-5 md:gap-2 md:p-2"
           :class="isPanelCollapsed ? 'p-2' : 'p-3'"
         >
           <button
@@ -2296,8 +2389,14 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               </span>
             </div>
             <div>
-              <p class="text-xs text-slate-500">Impressora</p>
-              <p class="text-base font-semibold text-slate-900">N/D</p>
+              <p class="text-xs text-slate-500">Ações</p>
+              <button
+                type="button"
+                class="mt-1 flex h-7 items-center justify-center rounded-md border border-slate-300 px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                @click="showHelpModal = true"
+              >
+                Ajuda (F1)
+              </button>
             </div>
           </div>
         </section>
@@ -2318,92 +2417,31 @@ function captureScannerInput(event: KeyboardEvent): boolean {
           Validando caixa aberto para o terminal...
         </div>
 
-        <div v-else-if="openCashRegister" class="grid grid-cols-1 gap-4 xl:grid-cols-[2fr_1fr]">
-          <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div class="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <p class="mb-2 text-sm font-medium text-slate-700">Cliente (opcional)</p>
-              <div class="flex flex-col gap-2 md:flex-row">
-                <div class="relative flex-1">
-                  <input
-                    :value="customerSearchInput"
-                    type="text"
-                    inputmode="tel"
-                    placeholder="Telefone ou nome do cliente"
-                    class="h-11 w-full rounded-md border border-slate-300 px-3 pr-10 text-base outline-none focus:border-blue-500"
-                    @input="handleCustomerPhoneInput"
-                    @keydown.enter.prevent="searchCustomer"
-                  />
-                  <button
-                    type="button"
-                    aria-label="Abrir lista de clientes"
-                    class="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                    @click="openCustomerListModal"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-                    </svg>
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  class="h-11 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800"
-                  @click="searchCustomer"
-                >
-                  Buscar
-                </button>
-              </div>
+        <div v-else-if="openCashRegister" class="flex-1 min-h-0 grid grid-cols-1 gap-2 lg:grid-cols-[minmax(0,1fr)_280px] overflow-hidden">
+          <section class="flex flex-col min-w-0 min-h-0 rounded-xl border border-slate-200 bg-white p-2 md:p-3 shadow-sm">
 
-              <div v-if="selectedCustomer" class="mt-3 rounded-md border border-slate-200 bg-white p-3">
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <p class="font-semibold text-slate-900">{{ selectedCustomer.name }}</p>
-                    <p v-if="selectedCustomer.phone" class="text-sm text-slate-500">
-                      Tel: {{ formatPhoneForDisplay(selectedCustomer.phone) }}
-                    </p>
-                    <p class="text-sm text-slate-500">
-                      Saldo fiado:
-                      <span
-                        class="mx-1 inline-block"
-                        :class="showCustomerDebt ? '' : 'blur-sm select-none'"
-                      >
-                        {{ formatCents(Math.max(0, selectedCustomer.credit_limit_cents - selectedCustomer.current_debt_cents)) }}
-                      </span>
-                      <button
-                        type="button"
-                        class="text-xs font-medium text-blue-700 underline"
-                        @click="showCustomerDebt = !showCustomerDebt"
-                      >
-                        {{ showCustomerDebt ? "Ocultar" : "Mostrar" }}
-                      </button>
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    aria-label="Limpar cliente"
-                    class="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 hover:bg-slate-100"
-                    @click="clearSelectedCustomer"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              <p v-if="customerSearchMessage" class="mt-2 text-sm text-slate-600">{{ customerSearchMessage }}</p>
-            </div>
-
-            <div class="mb-4 rounded-lg border border-slate-200 p-3">
+            <div class="mb-2 rounded-lg border border-slate-200 p-2">
               <p class="mb-2 text-sm font-medium text-slate-700">Entrada de produtos</p>
 
               <div class="flex gap-2">
-                <input
-                  ref="productInputRef"
-                  v-model="productEntryInput"
-                  type="text"
-                  autofocus
-                  placeholder="Código de barras"
-                  class="h-12 flex-1 rounded-md border border-slate-300 px-3 text-base outline-none focus:border-blue-500"
-                  @keydown.enter.prevent="handleProductEntry"
-                />
+                <div class="flex flex-1 rounded-md shadow-sm">
+                  <input
+                    ref="productInputRef"
+                    v-model="productEntryInput"
+                    type="text"
+                    autofocus
+                    placeholder="Código de barras"
+                    class="h-12 flex-1 rounded-l-md border border-slate-300 px-3 text-base outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                    @keydown.enter.prevent="handleProductEntry"
+                  />
+                  <button
+                    type="button"
+                    class="flex h-12 items-center justify-center rounded-r-md border border-y border-r border-l-0 border-slate-300 bg-slate-100 px-4 font-medium text-slate-700 transition hover:bg-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    @click="openProductSearchModal"
+                  >
+                    Buscar (F2)
+                  </button>
+                </div>
 
                 <button
                   type="button"
@@ -2432,28 +2470,29 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               <p v-if="productMessage" class="mt-2 text-sm text-slate-600">{{ productMessage }}</p>
             </div>
 
-            <div class="rounded-lg border border-slate-200">
-              <div class="hidden max-h-[420px] overflow-y-auto overflow-x-auto md:block">
+            <div class="flex-1 flex flex-col min-h-0 rounded-lg border border-slate-200 overflow-hidden">
+              <div class="hidden h-full flex-1 flex-col overflow-y-auto overflow-x-auto md:flex">
                 <table class="min-w-[640px] w-full text-sm">
                   <caption class="sr-only">Itens adicionados no carrinho da venda atual</caption>
                   <thead class="sticky top-0 bg-slate-100 text-left text-slate-700">
                     <tr>
                       <th scope="col" class="px-2 py-2">#</th>
                       <th scope="col" class="px-2 py-2">Código</th>
-                      <th scope="col" class="px-2 py-2">Nome</th>
+                      <th scope="col" class="px-2 py-2">Produto</th>
                       <th scope="col" class="px-2 py-2">Qtd</th>
-                      <th scope="col" class="px-2 py-2">Un</th>
                       <th scope="col" class="px-2 py-2">Valor Unit.</th>
                       <th scope="col" class="px-2 py-2">Total Item</th>
-                      <th scope="col" class="px-2 py-2">Ação</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr
                       v-for="(item, index) in saleStore.items"
                       :key="`${item.product_id}-${item.unit_price_cents}-${index}`"
-                      :class="selectedItemProductId === item.product_id ? 'bg-primary/5 outline-2 outline-primary/30' : ''"
-                      class="border-t border-slate-200 cursor-pointer"
+                      :class="[
+                        index === selectedIndex ? 'bg-primary/10 border-primary outline outline-2 outline-primary/50' : '',
+                        selectedItemProductId === item.product_id && index !== selectedIndex ? 'bg-primary/5 outline-2 outline-primary/30' : '',
+                        'border-t border-slate-200 cursor-pointer'
+                      ]"
                       tabindex="0"
                       @click="selectedItemProductId = item.product_id"
                       @keydown.enter="selectedItemProductId = item.product_id"
@@ -2473,47 +2512,17 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                         </div>
                       </td>
                       <td class="px-2 py-2">
-                        <div v-if="!item.is_bulk" class="flex items-center gap-1">
-                          <button
-                            type="button"
-                            aria-label="Diminuir quantidade"
-                            class="flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-slate-700 hover:bg-slate-100"
-                            @click.stop="decrementItemQuantity(item.product_id)"
-                          >
-                            −
-                          </button>
-                          <span class="min-w-8 text-center">{{ item.quantity }}</span>
-                          <button
-                            type="button"
-                            aria-label="Aumentar quantidade"
-                            class="flex min-h-11 min-w-11 items-center justify-center rounded border border-slate-300 text-slate-700 hover:bg-slate-100"
-                            @click.stop="incrementItemQuantity(item.product_id)"
-                          >
-                            +
-                          </button>
-                        </div>
-                        <span v-else class="text-xs font-medium text-slate-700">
-                          {{ item.quantity.toFixed(3).replace('.', ',') }} kg
+                        <span class="font-medium text-slate-700">
+                          {{ item.is_bulk ? item.quantity.toFixed(3).replace('.', ',') : item.quantity }}
                         </span>
                       </td>
-                      <td class="px-2 py-2">{{ item.is_bulk ? "kg" : "un" }}</td>
                       <td class="px-2 py-2">{{ formatCents(item.unit_price_cents) }}</td>
                       <td class="px-2 py-2">
                         {{ formatCents((item.is_bulk ? (item.total_cents || 0) : (item.unit_price_cents * item.quantity)) - item.discount_cents) }}
                       </td>
-                      <td class="px-2 py-2">
-                        <button
-                          type="button"
-                          :aria-label="`Remover item ${item.product_name}`"
-                          class="flex min-h-11 min-w-11 items-center justify-center rounded border border-red-300 text-red-700 hover:bg-red-50"
-                          @click.stop="removeItemWithApproval(item.product_id)"
-                        >
-                          ✕
-                        </button>
-                      </td>
                     </tr>
                     <tr v-if="saleStore.items.length === 0">
-                      <td colspan="8" class="px-3 py-6 text-center text-slate-500">
+                      <td colspan="6" class="px-3 py-6 text-center text-slate-500">
                         Nenhum item no carrinho.
                       </td>
                     </tr>
@@ -2521,7 +2530,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                 </table>
               </div>
 
-              <ul class="divide-y divide-slate-100 md:hidden">
+              <ul class="flex-1 overflow-y-auto divide-y divide-slate-100 md:hidden">
                 <li
                   v-for="(item, index) in saleStore.items"
                   :key="`${item.product_id}-${item.unit_price_cents}-${index}`"
@@ -2532,28 +2541,8 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                   <div class="min-w-0 flex-1">
                     <p class="truncate text-sm font-medium text-gray-800">{{ item.product_name }}</p>
                     <p class="mt-0.5 text-xs text-gray-500">{{ item.product_barcode || '-' }}</p>
-                    <div class="mt-1.5 flex items-center gap-2">
-                      <button
-                        type="button"
-                        aria-label="Diminuir quantidade"
-                        class="flex h-7 w-7 items-center justify-center rounded border text-sm font-bold text-gray-600 active:bg-gray-200"
-                        :disabled="item.is_bulk"
-                        @click.stop="decrementItemQuantity(item.product_id)"
-                      >
-                        −
-                      </button>
-                      <span class="w-10 text-center text-sm font-semibold">
-                        {{ item.is_bulk ? item.quantity.toFixed(3) : item.quantity }}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label="Aumentar quantidade"
-                        class="flex h-7 w-7 items-center justify-center rounded border text-sm font-bold text-gray-600 active:bg-gray-200"
-                        :disabled="item.is_bulk"
-                        @click.stop="incrementItemQuantity(item.product_id)"
-                      >
-                        +
-                      </button>
+                    <div class="mt-1.5 text-sm font-semibold text-gray-600">
+                      Qtd: {{ item.is_bulk ? item.quantity.toFixed(3).replace('.', ',') : item.quantity }}
                     </div>
                   </div>
 
@@ -2562,16 +2551,8 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                       {{ formatCents((item.is_bulk ? (item.total_cents || 0) : (item.unit_price_cents * item.quantity)) - item.discount_cents) }}
                     </span>
                     <span class="text-xs text-gray-400">
-                      {{ formatCents(item.unit_price_cents) }}/{{ item.is_bulk ? "kg" : "un" }}
+                      {{ formatCents(item.unit_price_cents) }}
                     </span>
-                    <button
-                      type="button"
-                      :aria-label="`Remover ${item.product_name} do carrinho`"
-                      class="flex h-7 w-7 items-center justify-center rounded text-red-700 active:bg-red-100"
-                      @click.stop="removeItemWithApproval(item.product_id)"
-                    >
-                      🗑️
-                    </button>
                   </div>
                 </li>
 
@@ -2582,21 +2563,16 @@ function captureScannerInput(event: KeyboardEvent): boolean {
             </div>
           </section>
 
-          <aside class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h2 class="mb-3 text-lg font-semibold text-slate-900">Resumo financeiro</h2>
-            <div class="space-y-2 text-sm">
-              <div class="flex items-center justify-between">
-                <span class="text-slate-600">Subtotal</span>
-                <strong class="text-slate-900">{{ formatCents(subtotalCents) }}</strong>
-              </div>
-            </div>
+          <aside class="flex flex-col overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 md:p-3 shadow-sm min-w-0">
+            <h2 class="mb-2 text-base font-semibold text-slate-900">Resumo financeiro</h2>
 
-            <div class="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+
+            <div class="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-2">
               <p class="text-sm text-blue-700">Total a pagar</p>
-              <p class="text-[34px] leading-none font-bold text-blue-900">{{ formatCents(totalCents) }}</p>
+              <p class="text-3xl leading-none font-bold text-blue-900 truncate" :title="formatCents(totalCents)">{{ formatCents(totalCents) }}</p>
             </div>
 
-            <div class="mt-4 grid grid-cols-1 gap-2">
+            <div class="mt-3 grid grid-cols-1 gap-2">
               <button
                 type="button"
                 class="h-11 rounded-md bg-blue-700 font-semibold text-white transition"
@@ -2612,66 +2588,11 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                 class="h-11 rounded-md border border-red-300 font-semibold text-red-700 hover:bg-red-50"
                 @click="cancelSaleWithApproval"
               >
-                Cancelar venda (F9)
+                Cancelar venda
               </button>
             </div>
 
-            <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
-              <button
-                type="button"
-                class="h-10 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-100"
-                @click="openProductSearchModal"
-              >
-                Buscar produto (F2)
-              </button>
-              <button
-                type="button"
-                class="h-10 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-100"
-                @click="openCashOutModal"
-              >
-                Sangria (F6)
-              </button>
-              <button
-                type="button"
-                class="h-10 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-100"
-                @click="openCashInModal"
-              >
-                Suprimento (F7)
-              </button>
-              <button
-                type="button"
-                class="h-10 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-100"
-                @click="selectedItemProductId && removeItemWithApproval(selectedItemProductId)"
-              >
-                Cancelar item (F8)
-              </button>
-            </div>
 
-            <!-- Painel de atalhos de teclado (recolhível) -->
-            <div class="mt-4">
-              <button
-                type="button"
-                class="flex w-full items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-xs text-slate-500 hover:bg-slate-50"
-                :aria-expanded="showHotkeys"
-                aria-controls="hotkeys-panel"
-                @click="showHotkeys = !showHotkeys"
-              >
-                <span>⌨️ Atalhos de teclado</span>
-                <span>{{ showHotkeys ? '▲' : '▼' }}</span>
-              </button>
-              <div
-                v-if="showHotkeys"
-                id="hotkeys-panel"
-                class="mt-1 grid grid-cols-2 gap-1 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600"
-              >
-                <span>F2 — Buscar produto</span>
-                <span>F4 — Finalizar venda</span>
-                <span>F6 — Sangria</span>
-                <span>F7 — Suprimento</span>
-                <span>F8 — Cancelar item</span>
-                <span>F9 — Cancelar venda</span>
-              </div>
-            </div>
           </aside>
         </div>
 
@@ -2845,6 +2766,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
         <h2 id="sales-product-search-modal-title" class="text-lg font-bold text-slate-900">Busca de Produto (F2)</h2>
 
         <input
+          ref="productSearchInputRef"
           v-model="productSearchInput"
           type="text"
           autofocus
@@ -2889,6 +2811,104 @@ function captureScannerInput(event: KeyboardEvent): boolean {
     </div>
 
     <div
+      v-if="showHelpModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="help-modal-title"
+      @click.self="showHelpModal = false"
+    >
+      <div class="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 id="help-modal-title" class="text-lg font-bold text-slate-900">Atalhos de Venda</h2>
+          <button type="button" class="text-slate-400 hover:text-slate-600" aria-label="Fechar" @click="showHelpModal = false">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="grid grid-cols-1 gap-2 text-sm text-slate-700">
+          <div class="flex items-center justify-between rounded border-b border-slate-100 py-2">
+            <span class="font-medium">Buscar produto</span>
+            <kbd class="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm border border-slate-200">F2</kbd>
+          </div>
+          <div class="flex items-center justify-between rounded border-b border-slate-100 py-2">
+            <span class="font-medium">Finalizar venda</span>
+            <kbd class="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm border border-slate-200">F4</kbd>
+          </div>
+          <div class="flex items-center justify-between rounded border-b border-slate-100 py-2">
+            <span class="font-medium">Sangria</span>
+            <kbd class="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm border border-slate-200">F6</kbd>
+          </div>
+          <div class="flex items-center justify-between rounded border-b border-slate-100 py-2">
+            <span class="font-medium">Suprimento</span>
+            <kbd class="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm border border-slate-200">F7</kbd>
+          </div>
+          <div class="flex items-center justify-between rounded border-b border-slate-100 py-2">
+            <span class="font-medium">Cancelar item</span>
+            <kbd class="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm border border-slate-200">F8</kbd>
+          </div>
+          <div class="flex items-center justify-between py-2">
+            <span class="font-medium">Alterar qtde</span>
+            <kbd class="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm border border-slate-200">F9</kbd>
+          </div>
+        </div>
+        <div class="mt-6 flex justify-end">
+          <button type="button" class="rounded-md bg-slate-100 border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 focus:ring-1 focus:ring-slate-300" @click="showHelpModal = false">
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showQuantityModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="quantity-modal-title"
+      @click.self="showQuantityModal = false"
+    >
+      <div class="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <h2 id="quantity-modal-title" class="text-lg font-bold text-slate-900">Alterar Quantidade</h2>
+        <p class="mt-1 text-sm text-slate-600">
+          Produto: <strong class="text-slate-900">{{ lastAddedProduct?.product_name }}</strong>
+        </p>
+
+        <div class="mt-4">
+          <label class="mb-1 block text-sm font-medium text-slate-700">Nova quantidade</label>
+          <input
+            v-model.number="newQuantityInput"
+            type="number"
+            min="1"
+            autofocus
+            class="h-11 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-blue-500"
+            @keydown.enter.prevent="confirmQuantityChange"
+          />
+        </div>
+
+        <p v-if="lastAddedProductError" class="mt-2 text-sm text-red-600">{{ lastAddedProductError }}</p>
+
+        <div class="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            @click="showQuantityModal = false"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            @click="confirmQuantityChange"
+          >
+            Confirmar
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
       v-if="showPaymentModal"
       class="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4"
       role="dialog"
@@ -2923,6 +2943,77 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               <p class="text-gray-700">Taxa operadora: {{ formatCents(totalFeeCents) }} ({{ feeRateLabel }}%)</p>
               <p class="font-semibold text-blue-900">Total com taxa: {{ formatCents(totalWithFeesCents) }}</p>
             </div>
+          </div>
+
+          <div v-if="hasFiadoSelectedInPayment" class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="mb-2 text-sm font-medium text-slate-700">Cliente (obrigatório para Fiado)</p>
+            <div v-if="!selectedCustomer" class="flex flex-col gap-2 md:flex-row">
+              <div class="relative flex-1">
+                <input
+                  :value="customerSearchInput"
+                  type="text"
+                  inputmode="tel"
+                  placeholder="Telefone ou nome do cliente"
+                  class="h-11 w-full rounded-md border border-slate-300 px-3 pr-10 text-base outline-none focus:border-blue-500"
+                  @input="handleCustomerPhoneInput"
+                  @keydown.enter.prevent="searchCustomer"
+                />
+                <button
+                  type="button"
+                  aria-label="Abrir lista de clientes"
+                  class="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  @click="openCustomerListModal"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+              </div>
+              <button
+                type="button"
+                class="h-11 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800"
+                @click="searchCustomer"
+              >
+                Buscar
+              </button>
+            </div>
+
+            <div v-if="selectedCustomer" class="rounded-md border border-slate-200 bg-white p-3">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <p class="font-semibold text-slate-900">{{ selectedCustomer.name }}</p>
+                  <p v-if="selectedCustomer.phone" class="text-sm text-slate-500">
+                    Tel: {{ formatPhoneForDisplay(selectedCustomer.phone) }}
+                  </p>
+                  <p class="text-sm text-slate-500">
+                    Saldo fiado:
+                    <span
+                      class="mx-1 inline-block"
+                      :class="showCustomerDebt ? '' : 'blur-sm select-none'"
+                    >
+                      {{ formatCents(Math.max(0, selectedCustomer.credit_limit_cents - selectedCustomer.current_debt_cents)) }}
+                    </span>
+                    <button
+                      type="button"
+                      class="text-xs font-medium text-blue-700 underline"
+                      @click="showCustomerDebt = !showCustomerDebt"
+                    >
+                      {{ showCustomerDebt ? "Ocultar" : "Mostrar" }}
+                    </button>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Limpar cliente"
+                  class="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 hover:bg-slate-100"
+                  @click="clearSelectedCustomer"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <p v-if="customerSearchMessage" class="mt-2 text-sm text-slate-600">{{ customerSearchMessage }}</p>
           </div>
 
           <div class="mt-4 space-y-3">
@@ -2967,33 +3058,37 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                 v-if="isCardMethod(row.method)"
                 class="rounded-md border border-slate-200 bg-slate-50 p-3 md:col-span-3"
               >
-                <label class="mb-1 block text-xs font-semibold text-slate-700">Maquininha *</label>
-                <select
-                  v-model="row.card_machine_id"
-                  class="h-10 w-full rounded-md border border-slate-300 px-3 text-base md:text-sm outline-none focus:border-blue-500"
-                  :disabled="loadingCardMachines"
-                >
-                  <option value="" disabled>Selecione uma maquininha ativa</option>
-                  <option v-for="machine in cardMachines" :key="machine.id" :value="machine.id">
-                    {{ machine.name }} - {{ machine.absorb_fee ? "Absorver taxa" : "Repassar ao cliente" }}
-                  </option>
-                </select>
-
-                <template v-if="row.method === PAYMENT_METHODS.CREDIT_CARD">
-                  <label class="mb-1 mt-3 block text-xs font-semibold text-slate-700">Parcelamento</label>
-                  <select
-                    v-model="row.installments"
-                    class="h-10 w-full rounded-md border border-slate-300 px-3 text-base md:text-sm outline-none focus:border-blue-500"
-                  >
-                    <option
-                      v-for="opt in getInstallmentOptions(row)"
-                      :key="opt.value"
-                      :value="opt.value"
+                <div class="grid grid-cols-1 gap-3" :class="cardMachines.length > 1 && row.method === PAYMENT_METHODS.CREDIT_CARD ? 'md:grid-cols-2' : ''">
+                  <div v-if="cardMachines.length > 1">
+                    <label class="mb-1 block text-xs font-semibold text-slate-700">Maquininha *</label>
+                    <select
+                      v-model="row.card_machine_id"
+                      class="h-10 w-full rounded-md border border-slate-300 px-3 text-base md:text-sm outline-none focus:border-blue-500"
+                      :disabled="loadingCardMachines"
                     >
-                      {{ opt.label }}
-                    </option>
-                  </select>
-                </template>
+                      <option value="" disabled>Selecione uma maquininha ativa</option>
+                      <option v-for="machine in cardMachines" :key="machine.id" :value="machine.id">
+                        {{ machine.name }} - {{ machine.absorb_fee ? "Absorver taxa" : "Repassar ao cliente" }}
+                      </option>
+                    </select>
+                  </div>
+
+                  <div v-if="row.method === PAYMENT_METHODS.CREDIT_CARD">
+                    <label class="mb-1 block text-xs font-semibold text-slate-700">Parcelamento</label>
+                    <select
+                      v-model="row.installments"
+                      class="h-10 w-full rounded-md border border-slate-300 px-3 text-base md:text-sm outline-none focus:border-blue-500"
+                    >
+                      <option
+                        v-for="opt in getInstallmentOptions(row)"
+                        :key="opt.value"
+                        :value="opt.value"
+                      >
+                        {{ opt.label }}
+                      </option>
+                    </select>
+                  </div>
+                </div>
 
                 <p v-if="getFeeCentsForRow(row) > 0" class="mt-2 text-xs text-slate-700">
                   Valor base: {{ formatCents(parseCurrencyInputToCents(row.amountInput)) }} | Taxa: {{
@@ -3004,75 +3099,83 @@ function captureScannerInput(event: KeyboardEvent): boolean {
             </div>
 
             <button
+              v-if="canAddMorePaymentRows"
               type="button"
-              class="h-10 rounded-md border border-blue-300 px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="!canAddMorePaymentRows"
+              class="flex h-14 w-full items-center justify-center rounded-md border-2 border-dashed border-slate-300 text-sm font-medium text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-600"
               @click="addPaymentRow"
             >
-              {{ canAddMorePaymentRows ? "Adicionar meio de pagamento" : "Máximo de 2 meios de pagamento atingido." }}
+              <svg xmlns="http://www.w3.org/2000/svg" class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+              Adicionar meio de pagamento
             </button>
           </div>
 
           <div v-if="cashAmountRequiredCents > 0" class="mt-4 rounded-md border border-slate-200 p-3">
-            <p class="mb-2 text-sm font-medium text-slate-700">Pagamento em dinheiro</p>
-            <label class="mb-1 block text-sm text-slate-600">Valor recebido</label>
-            <input
-              :value="cashReceivedInput"
-              type="text"
-              inputmode="numeric"
-              placeholder="R$ 0,00"
-              class="h-11 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-blue-500"
-              @input="handleCashReceivedCurrencyInput"
-            />
-            <p class="mt-2 text-sm text-slate-700">Troco: <strong>{{ formatCents(cashChangeCents) }}</strong></p>
+            <p class="mb-3 text-sm font-medium text-slate-700">Pagamento em dinheiro</p>
 
-            <div v-if="isCashOnlyPayment" class="mt-3">
-              <button
-                v-if="!showChangeDiscountInput && !hasAppliedChangeDiscount"
-                type="button"
-                class="min-h-11 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                @click="openChangeDiscountInput"
-              >
-                Desconto de Troco
-              </button>
-
-              <div v-else-if="showChangeDiscountInput" class="flex items-center gap-2">
+            <div class="flex flex-wrap items-end gap-4">
+              <div class="w-1/3 min-w-[140px]">
+                <label class="mb-1 block text-sm text-slate-600">Valor recebido</label>
                 <input
-                  ref="changeDiscountInputRef"
-                  :value="changeDiscountInput"
+                  :value="cashReceivedInput"
                   type="text"
                   inputmode="numeric"
                   placeholder="R$ 0,00"
-                  class="h-10 flex-1 rounded-md border border-slate-300 px-3 text-base md:text-sm outline-none focus:border-blue-500"
-                  @input="handleChangeDiscountCurrencyInput"
-                  @keydown.enter.prevent="confirmChangeDiscount"
+                  class="h-11 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-blue-500"
+                  @input="handleCashReceivedCurrencyInput"
                 />
-                <button
-                  type="button"
-                  class="h-10 rounded-md bg-blue-700 px-3 text-sm font-semibold text-white hover:bg-blue-800"
-                  @click="confirmChangeDiscount"
-                >
-                  Confirmar
-                </button>
               </div>
 
-              <div
-                v-else-if="hasAppliedChangeDiscount"
-                class="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"
-              >
-                <span>{{ appliedChangeDiscountMessage }}</span>
-                <button
-                  type="button"
-                  aria-label="Remover desconto de troco"
-                  class="rounded p-0.5 text-emerald-700 hover:bg-emerald-100"
-                  @click="removeChangeDiscount"
-                >
-                  ✕
-                </button>
-              </div>
+              <p class="mb-3 text-sm text-slate-700 whitespace-nowrap">Troco: <strong>{{ formatCents(cashChangeCents) }}</strong></p>
 
-              <p v-if="changeDiscountError" class="mt-1 text-xs text-red-700">{{ changeDiscountError }}</p>
+              <div v-if="isCashOnlyPayment" class="mb-0 flex-1 min-w-[200px]">
+                <button
+                  v-if="!showChangeDiscountInput && !hasAppliedChangeDiscount"
+                  type="button"
+                  class="h-11 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                  @click="openChangeDiscountInput"
+                >
+                  Desconto de Troco
+                </button>
+
+                <div v-else-if="showChangeDiscountInput" class="flex items-center gap-2">
+                  <input
+                    ref="changeDiscountInputRef"
+                    :value="changeDiscountInput"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="R$ 0,00"
+                    class="h-11 w-32 rounded-md border border-slate-300 px-3 text-base md:text-sm outline-none focus:border-blue-500"
+                    @input="handleChangeDiscountCurrencyInput"
+                    @keydown.enter.prevent="confirmChangeDiscount"
+                  />
+                  <button
+                    type="button"
+                    class="h-11 rounded-md bg-blue-700 px-3 text-sm font-semibold text-white hover:bg-blue-800"
+                    @click="confirmChangeDiscount"
+                  >
+                    Confirmar
+                  </button>
+                </div>
+
+                <div
+                  v-else-if="hasAppliedChangeDiscount"
+                  class="inline-flex h-11 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm text-emerald-800"
+                >
+                  <span>{{ appliedChangeDiscountMessage }}</span>
+                  <button
+                    type="button"
+                    aria-label="Remover desconto de troco"
+                    class="rounded p-0.5 text-emerald-700 hover:bg-emerald-100"
+                    @click="removeChangeDiscount"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
             </div>
+            <p v-if="isCashOnlyPayment && changeDiscountError" class="mt-2 text-xs text-red-700">{{ changeDiscountError }}</p>
           </div>
 
           <div v-if="hasFiadoSelectedInPayment && selectedCustomer" class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-3">

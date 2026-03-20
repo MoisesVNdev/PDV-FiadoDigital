@@ -321,7 +321,6 @@ onUnmounted(() => {
       <main class="min-w-0 flex-1 px-3 py-4 sm:px-4 md:px-6 md:py-6">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 class="text-2xl font-bold text-gray-900">Visão Geral</h1>
             <p class="text-sm text-gray-500">{{ formattedDate }}</p>
           </div>
           <div class="flex items-center gap-2">

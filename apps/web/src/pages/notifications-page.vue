@@ -174,7 +174,7 @@ onMounted(() => {
       <main class="flex-1 overflow-auto p-4 md:p-6">
         <!-- Cabeçalho da página -->
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h1 class="text-xl font-bold text-gray-900">Notificações</h1>
+          <div></div>
           <div class="flex items-center gap-2">
             <button
               v-if="canAcknowledge"

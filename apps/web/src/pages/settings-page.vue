@@ -1311,12 +1311,10 @@ function changePaymentTab(tab: PaymentTabKey): void {
     <div class="flex flex-1 flex-col">
       <AppHeader />
       <main class="flex-1 p-6">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <h1 class="text-3xl font-bold text-gray-900">Configurações</h1>
-        </div>
+
 
         <div class="mt-6 overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0">
-          <div class="flex gap-1 min-w-max md:min-w-0 border-b border-gray-200">
+          <div class="flex gap-1 min-w-max border-b border-gray-200">
             <button
               type="button"
               :class="[
@@ -1358,7 +1356,7 @@ function changePaymentTab(tab: PaymentTabKey): void {
 
         <section v-if="activeMainTab === 'payment-methods'" class="mt-4">
           <div class="overflow-x-auto -mx-3 px-3 md:mx-0 md:px-0 bg-surface/70">
-            <div class="flex gap-1 min-w-max md:min-w-0 border-b border-gray-200 px-1">
+            <div class="flex gap-1 min-w-max border-b border-gray-200 px-1">
               <button
                 type="button"
                 :class="[
@@ -2594,7 +2592,7 @@ function changePaymentTab(tab: PaymentTabKey): void {
           aria-labelledby="card-machine-modal-title"
           @click.self="closeCardMachineModal"
         >
-          <div class="relative max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-3xl sm:rounded-2xl">
+          <div class="relative max-h-[85vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-3xl sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden" aria-hidden="true"></div>
 
             <div class="p-4 sm:p-6">
@@ -2797,7 +2795,7 @@ function changePaymentTab(tab: PaymentTabKey): void {
           aria-labelledby="settings-password-modal-title"
           @click.self="closePasswordModal"
         >
-          <div class="relative max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl">
+          <div class="relative max-h-[85vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl">
             <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden" aria-hidden="true"></div>
 
             <div class="p-4 sm:p-6">
