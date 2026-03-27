@@ -2,8 +2,10 @@
 import { computed, onMounted, ref, watch } from "vue";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
+import ConfirmDialog from "@/components/layout/confirm-dialog.vue";
 import NotificationToastContainer from "@/components/layout/notification-toast-container.vue";
 import { useNotifications, type NotificationFilters } from "@/composables/use-notifications.js";
+import { useConfirm } from "@/composables/use-confirm.js";
 import { useAuthStore } from "@/stores/auth.store.js";
 import type { Notification } from "@pdv/shared";
 
@@ -30,6 +32,16 @@ const {
   exportCsv,
   deleteRead,
 } = useNotifications();
+
+const {
+  showConfirm,
+  confirmTitle,
+  confirmMessage,
+  confirmLabel,
+  confirm,
+  onConfirm,
+  onCancel,
+} = useConfirm();
 
 const activeTab = ref<TabKey>("all");
 const searchQuery = ref("");
@@ -95,6 +107,14 @@ async function handleMarkAllRead(): Promise<void> {
 }
 
 async function handleDeleteRead(): Promise<void> {
+  const isConfirmed = await confirm({
+    title: "Apagar Lidas",
+    message: "Tem certeza que deseja apagar todas as notificações lidas? Esta ação não pode ser desfeita.",
+    confirmLabel: "Apagar tudo",
+  });
+
+  if (!isConfirmed) return;
+
   await deleteRead();
   await loadNotifications();
 }
@@ -164,6 +184,14 @@ onMounted(() => {
   <div class="flex min-h-screen flex-col bg-surface">
     <AppHeader />
     <NotificationToastContainer />
+    <ConfirmDialog
+      :open="showConfirm"
+      :title="confirmTitle"
+      :message="confirmMessage"
+      :confirm-label="confirmLabel"
+      @confirm="onConfirm"
+      @cancel="onCancel"
+    />
 
     <div class="flex flex-1">
       <AppSidebar />

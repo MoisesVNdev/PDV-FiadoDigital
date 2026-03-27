@@ -2218,285 +2218,302 @@ async function submitSinglePrice(): Promise<void> {
 
         <div
           v-if="showProductModal"
-          class="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="product-form-modal-title"
         >
-          <div class="absolute inset-0 bg-black/50" @click="closeProductModal" />
           <div
             ref="productModalScrollableRef"
-            class="relative z-10 flex max-h-[85vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:max-w-2xl sm:rounded-2xl"
+            class="relative z-10 flex h-full max-h-[95vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
           >
-            <div class="mx-auto mt-3 h-1 w-12 rounded-full bg-gray-200 sm:hidden" />
-            <div class="flex min-h-0 flex-1 flex-col p-4 sm:p-6">
-            <div class="mb-4 flex items-center justify-between">
-              <h2 id="product-form-modal-title" class="text-xl font-bold text-gray-900">
-                {{ isProductEditMode ? "Editar Produto" : "Novo Produto" }}
-              </h2>
-              <button
-                type="button"
-                class="rounded-lg p-1 text-gray-500 transition hover:bg-gray-100 hover:text-gray-600"
-                aria-label="Fechar modal"
-                @click="closeProductModal"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  class="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="2"
+            <!-- Cabeçalho -->
+            <div class="shrink-0 border-b border-gray-100 p-4 sm:p-6">
+              <div class="flex items-center justify-between">
+                <h2 id="product-form-modal-title" class="text-xl font-bold text-gray-900">
+                  {{ isProductEditMode ? "Editar Produto" : "Novo Produto" }}
+                </h2>
+                <button
+                  type="button"
+                  class="rounded-lg p-1 text-gray-500 transition hover:bg-gray-100 hover:text-gray-600"
+                  aria-label="Fechar modal"
+                  @click="closeProductModal"
                 >
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div
-              v-if="productFormErrors.submit"
-              class="mb-4 rounded bg-red-100 p-3 text-sm text-danger"
-              role="alert"
-            >
-              {{ productFormErrors.submit }}
-            </div>
-
-            <form
-              id="product-form"
-              novalidate
-              @submit.prevent="submitProductForm"
-            >
-              <div class="min-h-0 flex-1 overflow-y-auto pr-2 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div class="md:col-span-2">
-                <label for="product_name" class="mb-1 block text-sm font-medium text-gray-700">Nome *</label>
-                <input
-                  id="product_name"
-                  v-model="productFormData.name"
-                  type="text"
-                  autofocus
-                  maxlength="100"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                />
-                <p v-if="productFormErrors.name" class="mt-1 text-xs text-danger">{{ productFormErrors.name[0] }}</p>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    class="h-6 w-6"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
 
-              <div>
-                <label for="product_brand" class="mb-1 block text-sm font-medium text-gray-700">Marca</label>
-                <div class="flex gap-2">
-                  <select
-                    id="product_brand"
-                    v-model="productFormData.brand_id"
-                    class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  >
-                    <option value="">Sem marca</option>
-                    <option v-for="item in brands" :key="item.id" :value="item.id">
-                      {{ item.name }}
-                    </option>
-                  </select>
-                  <button
-                    type="button"
-                    aria-label="Cadastrar nova marca"
-                    class="rounded border border-primary px-3 py-2 text-sm font-semibold text-primary transition hover:bg-primary/10"
-                    @click="openInlineBrandCreate"
-                  >
-                    +
-                  </button>
-                </div>
-                <p v-if="brandsError" class="mt-1 text-xs text-danger">{{ brandsError }}</p>
-                <p v-if="productFormErrors.brand_id" class="mt-1 text-xs text-danger">{{ productFormErrors.brand_id[0] }}</p>
+              <div
+                v-if="productFormErrors.submit"
+                class="mt-4 rounded bg-red-100 p-3 text-sm text-danger"
+                role="alert"
+              >
+                {{ productFormErrors.submit }}
+              </div>
+            </div>
 
-                <div v-if="showInlineBrandCreate" class="mt-2 rounded border border-gray-200 bg-surface p-3">
-                  <label for="inline_brand_name" class="mb-1 block text-xs font-medium text-gray-700">Nova Marca</label>
+            <!-- Corpo do Formulário -->
+            <div class="flex-1 overflow-y-auto p-4 sm:p-6">
+              <form
+                id="product-form"
+                class="grid grid-cols-1 gap-4 md:grid-cols-2"
+                novalidate
+                @submit.prevent="submitProductForm"
+              >
+                <div class="md:col-span-2">
+                  <label for="product_name" class="mb-1 block text-sm font-medium text-gray-700">Nome *</label>
                   <input
-                    id="inline_brand_name"
-                    v-model="brandFormName"
+                    id="product_name"
+                    v-model="productFormData.name"
                     type="text"
+                    autofocus
                     maxlength="100"
                     class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                   />
-                  <p v-if="brandFormErrors.name" class="mt-1 text-xs text-danger">{{ brandFormErrors.name[0] }}</p>
-                  <p v-if="brandFormErrors.submit" class="mt-1 text-xs text-danger">{{ brandFormErrors.submit }}</p>
-                  <div class="mt-3 flex justify-end gap-2">
+                  <p v-if="productFormErrors.name" class="mt-1 text-xs text-danger">{{ productFormErrors.name[0] }}</p>
+                </div>
+
+                <div>
+                  <label for="product_brand" class="mb-1 block text-sm font-medium text-gray-700">Marca</label>
+                  <div class="flex gap-2">
+                    <select
+                      id="product_brand"
+                      v-model="productFormData.brand_id"
+                      class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    >
+                      <option value="">Sem marca</option>
+                      <option v-for="item in brands" :key="item.id" :value="item.id">
+                        {{ item.name }}
+                      </option>
+                    </select>
                     <button
                       type="button"
-                      class="min-h-11 inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
-                      @click="closeInlineBrandCreate"
+                      aria-label="Cadastrar nova marca"
+                      class="rounded border border-primary px-3 py-2 text-sm font-semibold text-primary transition hover:bg-primary/10"
+                      @click="openInlineBrandCreate"
                     >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      :disabled="loadingBrandSubmit"
-                      class="min-h-11 inline-flex items-center justify-center rounded bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
-                      @click="submitInlineBrandCreate"
-                    >
-                      {{ loadingBrandSubmit ? "Salvando..." : "Salvar" }}
+                      +
                     </button>
                   </div>
+                  <p v-if="brandsError" class="mt-1 text-xs text-danger">{{ brandsError }}</p>
+                  <p v-if="productFormErrors.brand_id" class="mt-1 text-xs text-danger">{{ productFormErrors.brand_id[0] }}</p>
+
+                  <div v-if="showInlineBrandCreate" class="mt-2 rounded border border-gray-200 bg-surface p-3">
+                    <label for="inline_brand_name" class="mb-1 block text-xs font-medium text-gray-700">Nova Marca</label>
+                    <input
+                      id="inline_brand_name"
+                      v-model="brandFormName"
+                      type="text"
+                      maxlength="100"
+                      class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                    <p v-if="brandFormErrors.name" class="mt-1 text-xs text-danger">{{ brandFormErrors.name[0] }}</p>
+                    <p v-if="brandFormErrors.submit" class="mt-1 text-xs text-danger">{{ brandFormErrors.submit }}</p>
+                    <div class="mt-3 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        class="min-h-11 inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+                        @click="closeInlineBrandCreate"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        :disabled="loadingBrandSubmit"
+                        class="min-h-11 inline-flex items-center justify-center rounded bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
+                        @click="submitInlineBrandCreate"
+                      >
+                        {{ loadingBrandSubmit ? "Salvando..." : "Salvar" }}
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              <div>
-                <label for="product_barcode" class="mb-1 block text-sm font-medium text-gray-700">Código de Barras</label>
-                <input
-                  id="product_barcode"
-                  :value="productFormData.barcode"
-                  type="text"
-                  inputmode="numeric"
-                  maxlength="13"
-                  placeholder="EAN-8 ou EAN-13"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  @input="handleBarcodeInput"
-                />
-                <p v-if="productFormErrors.barcode" class="mt-1 text-xs text-danger">{{ productFormErrors.barcode[0] }}</p>
-              </div>
-
-              <div class="md:col-span-2">
-                <label for="product_description" class="mb-1 block text-sm font-medium text-gray-700">Descrição</label>
-                <textarea
-                  id="product_description"
-                  v-model="productFormData.description"
-                  maxlength="255"
-                  rows="2"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                ></textarea>
-                <p v-if="productFormErrors.description" class="mt-1 text-xs text-danger">{{ productFormErrors.description[0] }}</p>
-              </div>
-
-              <div>
-                <label for="product_weight_unit" class="mb-1 block text-sm font-medium text-gray-700">Unidade de Gramagem</label>
-                <select
-                  id="product_weight_unit"
-                  :value="productFormData.weight_unit"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  @change="handleWeightUnitChange"
-                >
-                  <option value="">Selecione</option>
-                  <option v-for="item in weightUnitOptions" :key="item.value" :value="item.value">
-                    {{ item.label }}
-                  </option>
-                </select>
-                <p v-if="productFormErrors.weight_unit" class="mt-1 text-xs text-danger">{{ productFormErrors.weight_unit[0] }}</p>
-              </div>
-
-              <div>
-                <label for="product_weight_value" class="mb-1 block text-sm font-medium text-gray-700">Gramagem</label>
-                <input
-                  id="product_weight_value"
-                  :value="productFormData.weight_value"
-                  type="text"
-                  inputmode="decimal"
-                  placeholder="Ex.: 500 ou 1.5"
-                  :disabled="productFormData.weight_unit === 'un' || productFormData.is_bulk"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-gray-100"
-                  @input="handleWeightValueInput"
-                />
-                <p v-if="productFormErrors.weight_value" class="mt-1 text-xs text-danger">{{ productFormErrors.weight_value[0] }}</p>
-              </div>
-
-              <div class="md:col-span-2 rounded border border-gray-200 bg-surface px-4 py-3">
-                <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                <div>
+                  <label for="product_barcode" class="mb-1 block text-sm font-medium text-gray-700">Código de Barras</label>
                   <input
-                    type="checkbox"
-                    :checked="productFormData.is_bulk"
-                    class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                    @change="handleBulkFlagChange"
+                    id="product_barcode"
+                    :value="productFormData.barcode"
+                    type="text"
+                    inputmode="numeric"
+                    maxlength="13"
+                    placeholder="EAN-8 ou EAN-13"
+                    class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    @input="handleBarcodeInput"
                   />
-                  Produto a Granel
-                </label>
-                <p class="mt-1 text-xs text-gray-600">
-                  Marque se este produto é vendido por peso (ex.: carnes, queijos, frios).
-                </p>
-              </div>
+                  <p v-if="productFormErrors.barcode" class="mt-1 text-xs text-danger">{{ productFormErrors.barcode[0] }}</p>
+                </div>
 
-              <div>
-                <label for="product_type" class="mb-1 block text-sm font-medium text-gray-700">Tipo de Produto</label>
-                <select
-                  id="product_type"
-                  v-model="productFormData.product_type_id"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                >
-                  <option value="">Sem tipo</option>
-                  <option v-for="item in productTypes" :key="item.id" :value="item.id">
-                    {{ item.name }}
-                  </option>
-                </select>
-              </div>
+                <div class="md:col-span-2">
+                  <label for="product_description" class="mb-1 block text-sm font-medium text-gray-700">Descrição</label>
+                  <textarea
+                    id="product_description"
+                    v-model="productFormData.description"
+                    maxlength="255"
+                    rows="1"
+                    class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  ></textarea>
+                  <p v-if="productFormErrors.description" class="mt-1 text-xs text-danger">{{ productFormErrors.description[0] }}</p>
+                </div>
 
-              <div v-if="canViewSalePriceField">
-                <label for="product_price" class="mb-1 block text-sm font-medium text-gray-700">Preço de Venda</label>
-                <input
-                  id="product_price"
-                  :value="displayedSalePriceInput"
-                  type="text"
-                  inputmode="numeric"
-                  placeholder="R$ 0,00"
-                  :readonly="isSalePriceAutoCalculated"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 read-only:cursor-not-allowed read-only:bg-gray-100"
-                  @input="handlePriceInput"
-                />
-                <p v-if="isSalePriceAutoCalculated" class="mt-1 text-xs text-gray-600">
-                  Valor calculado automaticamente pela margem do tipo selecionado.
-                </p>
-                <p v-if="productFormErrors.price_cents" class="mt-1 text-xs text-danger">{{ productFormErrors.price_cents[0] }}</p>
-              </div>
+                <div class="md:col-span-2 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div>
+                    <label for="product_weight_unit" class="mb-1 block text-sm font-medium text-gray-700">Unidade de Gramagem</label>
+                    <select
+                      id="product_weight_unit"
+                      :value="productFormData.weight_unit"
+                      class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      @change="handleWeightUnitChange"
+                    >
+                      <option value="">Selecione</option>
+                      <option v-for="item in weightUnitOptions" :key="item.value" :value="item.value">
+                        {{ item.label }}
+                      </option>
+                    </select>
+                    <p v-if="productFormErrors.weight_unit" class="mt-1 text-xs text-danger">{{ productFormErrors.weight_unit[0] }}</p>
+                  </div>
 
-              <div v-if="canViewCostPrice">
-                <label for="product_cost_price" class="mb-1 block text-sm font-medium text-gray-700">Preço de Custo *</label>
-                <input
-                  id="product_cost_price"
-                  :value="productFormData.cost_price_input"
-                  type="text"
-                  inputmode="numeric"
-                  placeholder="R$ 0,00"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  @input="handleCostPriceInput"
-                />
-                <p v-if="productFormErrors.cost_price_cents" class="mt-1 text-xs text-danger">{{ productFormErrors.cost_price_cents[0] }}</p>
-              </div>
+                  <div>
+                    <label for="product_weight_value" class="mb-1 block text-sm font-medium text-gray-700">Gramagem</label>
+                    <input
+                      id="product_weight_value"
+                      :value="productFormData.weight_value"
+                      type="text"
+                      inputmode="decimal"
+                      placeholder="Ex.: 500 ou 1.5"
+                      :disabled="productFormData.weight_unit === 'un' || productFormData.is_bulk"
+                      class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-gray-100"
+                      @input="handleWeightValueInput"
+                    />
+                    <p v-if="productFormErrors.weight_value" class="mt-1 text-xs text-danger">{{ productFormErrors.weight_value[0] }}</p>
+                  </div>
 
-              <div>
-                <label for="product_stock" class="mb-1 block text-sm font-medium text-gray-700">Quantidade Inicial *</label>
-                <input
-                  id="product_stock"
-                  v-model="productFormData.stock_quantity"
-                  type="number"
-                  min="0"
-                  inputmode="numeric"
-                  :disabled="isProductEditMode"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-gray-100"
-                />
-                <p v-if="productFormErrors.stock_quantity" class="mt-1 text-xs text-danger">{{ productFormErrors.stock_quantity[0] }}</p>
-              </div>
+                  <div class="flex flex-col justify-end pb-1.5">
+                    <div class="group relative flex items-center gap-1.5">
+                      <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          :checked="productFormData.is_bulk"
+                          class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                          @change="handleBulkFlagChange"
+                        />
+                        Produto a Granel
+                      </label>
+                      <div class="relative flex items-center">
+                        <span
+                          class="flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-blue-500 text-[10px] font-bold text-blue-500 transition-colors hover:bg-blue-50"
+                        >
+                          ?
+                        </span>
+                        <!-- Tooltip -->
+                        <div class="absolute bottom-full left-1/2 mb-2 hidden w-48 -translate-x-1/2 rounded bg-gray-800 p-2 text-center text-[10px] leading-tight text-white shadow-xl z-50 group-hover:block">
+                          Marque se este produto é vendido por peso (ex.: carnes, queijos, frios).
+                          <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-              <div>
-                <label for="product_min_stock" class="mb-1 block text-sm font-medium text-gray-700">Estoque Mínimo *</label>
-                <input
-                  id="product_min_stock"
-                  v-model="productFormData.min_stock_alert"
-                  type="number"
-                  min="0"
-                  inputmode="numeric"
-                  class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                />
-                <p v-if="productFormErrors.min_stock_alert" class="mt-1 text-xs text-danger">{{ productFormErrors.min_stock_alert[0] }}</p>
-              </div>
+                <div>
+                  <label for="product_type" class="mb-1 block text-sm font-medium text-gray-700">Tipo de Produto</label>
+                  <select
+                    id="product_type"
+                    v-model="productFormData.product_type_id"
+                    class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="">Sem tipo</option>
+                    <option v-for="item in productTypes" :key="item.id" :value="item.id">
+                      {{ item.name }}
+                    </option>
+                  </select>
+                </div>
 
-              </div>
+                <div v-if="canViewSalePriceField">
+                  <label for="product_price" class="mb-1 block text-sm font-medium text-gray-700">Preço de Venda</label>
+                  <input
+                    id="product_price"
+                    :value="displayedSalePriceInput"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="R$ 0,00"
+                    :readonly="isSalePriceAutoCalculated"
+                    class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 read-only:cursor-not-allowed read-only:bg-gray-100"
+                    @input="handlePriceInput"
+                  />
+                  <p v-if="isSalePriceAutoCalculated" class="mt-1 text-xs text-gray-600">
+                    Valor calculado automaticamente pela margem do tipo selecionado.
+                  </p>
+                  <p v-if="productFormErrors.price_cents" class="mt-1 text-xs text-danger">{{ productFormErrors.price_cents[0] }}</p>
+                </div>
 
-              <div class="flex shrink-0 justify-end gap-3 pt-4 mt-4 border-t border-gray-100">
+                <div v-if="canViewCostPrice">
+                  <label for="product_cost_price" class="mb-1 block text-sm font-medium text-gray-700">Preço de Custo *</label>
+                  <input
+                    id="product_cost_price"
+                    :value="productFormData.cost_price_input"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="R$ 0,00"
+                    class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    @input="handleCostPriceInput"
+                  />
+                  <p v-if="productFormErrors.cost_price_cents" class="mt-1 text-xs text-danger">{{ productFormErrors.cost_price_cents[0] }}</p>
+                </div>
+
+                <div>
+                  <label for="product_stock" class="mb-1 block text-sm font-medium text-gray-700">Quantidade Inicial *</label>
+                  <input
+                    id="product_stock"
+                    v-model="productFormData.stock_quantity"
+                    type="number"
+                    min="0"
+                    inputmode="numeric"
+                    :disabled="isProductEditMode"
+                    class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-gray-100"
+                  />
+                  <p v-if="productFormErrors.stock_quantity" class="mt-1 text-xs text-danger">{{ productFormErrors.stock_quantity[0] }}</p>
+                </div>
+
+                <div>
+                  <label for="product_min_stock" class="mb-1 block text-sm font-medium text-gray-700">Estoque Mínimo *</label>
+                  <input
+                    id="product_min_stock"
+                    v-model="productFormData.min_stock_alert"
+                    type="number"
+                    min="0"
+                    inputmode="numeric"
+                    class="w-full rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                  <p v-if="productFormErrors.min_stock_alert" class="mt-1 text-xs text-danger">{{ productFormErrors.min_stock_alert[0] }}</p>
+                </div>
+              </form>
+            </div>
+
+            <!-- Rodapé (Botões de Ação) -->
+            <div class="shrink-0 border-t border-gray-200 bg-white p-4">
+              <div class="flex justify-end gap-3">
                 <button
                   type="button"
-                  class="rounded border border-gray-300 px-4 py-2 font-medium text-gray-700 transition hover:bg-gray-50"
+                  class="min-h-11 rounded border border-gray-300 px-4 py-2 font-medium text-gray-700 transition hover:bg-gray-50"
                   @click="closeProductModal"
                 >
                   Cancelar
                 </button>
                 <button
-                  type="button"
+                  form="product-form"
+                  type="submit"
                   :disabled="loadingProductSubmit"
-                  class="flex items-center gap-2 rounded bg-primary px-4 py-2 font-medium text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
-                  @click="submitProductForm"
+                  class="min-h-11 flex items-center gap-2 rounded bg-primary px-6 py-2 font-medium text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <svg
                     v-if="loadingProductSubmit"
@@ -2508,10 +2525,9 @@ async function submitSinglePrice(): Promise<void> {
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                   </svg>
-                  <span>{{ loadingProductSubmit ? "Salvando..." : "Salvar" }}</span>
+                  <span>{{ loadingProductSubmit ? "Salvando..." : "Salvar Produto" }}</span>
                 </button>
               </div>
-            </form>
             </div>
           </div>
         </div>

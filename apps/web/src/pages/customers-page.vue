@@ -93,8 +93,8 @@ const activeTab = ref<TabKey>("customers");
 const customers = ref<Customer[]>([]);
 const loadingList = ref(false);
 const listError = ref<string | null>(null);
-const currentPage = ref(1);
-const perPage = ref(10);
+const customersCurrentPage = ref(1);
+const customersPerPage = ref(10);
 const totalCustomers = ref(0);
 const totalPages = ref(0);
 
@@ -201,13 +201,23 @@ const formData = ref<FormData>({
 
 const formErrors = ref<FormErrors>({});
 
+const paginatedCustomers = computed(() => {
+  const start = (customersCurrentPage.value - 1) * customersPerPage.value;
+  const end = start + customersPerPage.value;
+  return customers.value.slice(start, end);
+});
+
+const customersTotalPages = computed(() => {
+  return Math.ceil(customers.value.length / customersPerPage.value);
+});
+
 const totalPagesArray = computed(() => {
   const pages = [];
   const maxPagesToShow = 5;
   const half = Math.floor(maxPagesToShow / 2);
 
-  let start = Math.max(1, currentPage.value - half);
-  let end = Math.min(totalPages.value, start + maxPagesToShow - 1);
+  let start = Math.max(1, customersCurrentPage.value - half);
+  let end = Math.min(customersTotalPages.value, start + maxPagesToShow - 1);
 
   if (end - start + 1 < maxPagesToShow) {
     start = Math.max(1, end - maxPagesToShow + 1);
@@ -307,7 +317,7 @@ onUnmounted(() => {
 });
 
 watch(() => searchInput.value, () => {
-  currentPage.value = 1;
+  customersCurrentPage.value = 1;
   debouncedSearch();
 });
 
@@ -626,7 +636,7 @@ function toggleSortOrder(column: SortBy): void {
     sortOrder.value = "asc";
   }
 
-  currentPage.value = 1;
+  customersCurrentPage.value = 1;
   loadCustomers();
 }
 
@@ -644,8 +654,8 @@ async function loadCustomers(): Promise<void> {
 
   try {
     const params = new URLSearchParams({
-      page: String(currentPage.value),
-      per_page: String(perPage.value),
+      page: "1",
+      per_page: "1000",
       sort_by: sortBy.value,
       sort_order: sortOrder.value,
     });
@@ -665,7 +675,6 @@ async function loadCustomers(): Promise<void> {
     customers.value = data.data as Customer[];
     totalCustomers.value = data.pagination.total;
     totalPages.value = data.pagination.total_pages;
-    currentPage.value = data.pagination.page;
   } catch (error) {
     console.error("Erro ao carregar clientes:", error);
     listError.value = "Erro de conexão ao carregar clientes.";
@@ -676,7 +685,7 @@ async function loadCustomers(): Promise<void> {
 
 function clearSearch(): void {
   searchInput.value = "";
-  currentPage.value = 1;
+  customersCurrentPage.value = 1;
 }
 
 async function loadHistoryCustomers(): Promise<void> {
@@ -822,8 +831,7 @@ function goToNextPaymentHistoryPage(): void {
 }
 
 function handlePerPageChange(): void {
-  currentPage.value = 1;
-  loadCustomers();
+  customersCurrentPage.value = 1;
 }
 
 function handleFiadoHistoryPerPageChange(): void {
@@ -837,21 +845,18 @@ function handlePaymentHistoryPerPageChange(): void {
 }
 
 function goToPage(page: number): void {
-  currentPage.value = page;
-  loadCustomers();
+  customersCurrentPage.value = page;
 }
 
 function goToPreviousPage(): void {
-  if (currentPage.value > 1) {
-    currentPage.value--;
-    loadCustomers();
+  if (customersCurrentPage.value > 1) {
+    customersCurrentPage.value--;
   }
 }
 
 function goToNextPage(): void {
-  if (currentPage.value < totalPages.value) {
-    currentPage.value++;
-    loadCustomers();
+  if (customersCurrentPage.value < customersTotalPages.value) {
+    customersCurrentPage.value++;
   }
 }
 
@@ -1359,7 +1364,7 @@ function submitWhatsAppForm(): void {
               <div class="flex items-center gap-2">
                 <label class="text-sm font-medium text-gray-700">Itens por página:</label>
                 <select
-                  v-model="perPage"
+                  v-model="customersPerPage"
                   @change="handlePerPageChange"
                   class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
@@ -1370,14 +1375,14 @@ function submitWhatsAppForm(): void {
                 </select>
               </div>
             </div>
-            <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
-              <table class="w-full min-w-[1200px]">
+            <div class="w-full overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
+              <table class="w-full min-w-[800px]">
                 <caption class="sr-only">Lista de clientes cadastrados</caption>
                 <thead class="bg-gray-50">
-                  <tr>
+                  <tr class="bg-gray-50">
                     <th
                       scope="col"
-                      class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                      class="cursor-pointer max-w-[150px] whitespace-nowrap px-3 py-2 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100 md:max-w-[200px]"
                       @click="toggleSortOrder('name')"
                     >
                       <span class="flex items-center gap-2">
@@ -1385,40 +1390,39 @@ function submitWhatsAppForm(): void {
                         <span class="text-xs">{{ getSortIcon("name") }}</span>
                       </span>
                     </th>
-                    <th scope="col" class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Telefone</th>
                     <th
                       scope="col"
-                      class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                      class="cursor-pointer whitespace-nowrap px-3 py-2 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                       @click="toggleSortOrder('credit_limit_cents')"
                     >
                       <span class="flex items-center gap-2">
-                        Limite de Fiado
+                        Limite
                         <span class="text-xs">{{ getSortIcon("credit_limit_cents") }}</span>
                       </span>
                     </th>
                     <th
                       scope="col"
-                      class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                      class="cursor-pointer whitespace-nowrap px-3 py-2 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                       @click="toggleSortOrder('payment_due_day')"
                     >
                       <span class="flex items-center gap-2">
-                        Dia de Pagamento
+                        Venc.
                         <span class="text-xs">{{ getSortIcon("payment_due_day") }}</span>
                       </span>
                     </th>
                     <th
                       scope="col"
-                      class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                      class="cursor-pointer whitespace-nowrap px-3 py-2 text-center text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                       @click="toggleSortOrder('current_debt_cents')"
                     >
-                      <span class="flex items-center gap-2">
-                        Fiado Atual
+                      <span class="flex items-center justify-center gap-2">
+                        Dívida
                         <span class="text-xs">{{ getSortIcon("current_debt_cents") }}</span>
                       </span>
                     </th>
                     <th
                       scope="col"
-                      class="cursor-pointer px-6 py-3 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                      class="cursor-pointer whitespace-nowrap px-3 py-2 text-left text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
                       @click="toggleSortOrder('is_active')"
                     >
                       <span class="flex items-center gap-2">
@@ -1426,82 +1430,55 @@ function submitWhatsAppForm(): void {
                         <span class="text-xs">{{ getSortIcon("is_active") }}</span>
                       </span>
                     </th>
-                    <th scope="col" class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Ações</th>
+                    <th scope="col" class="whitespace-nowrap px-3 py-2 text-center text-sm font-semibold text-gray-700">Ações</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
-                  <tr v-for="customer in customers" :key="customer.id" class="hover:bg-gray-50">
-                    <td class="px-6 py-4 text-sm text-gray-900">{{ customer.name }}</td>
-                    <td class="px-6 py-4 text-sm text-gray-600">
-                      {{ formatPhoneForDisplay(customer.phone) }}
-                    </td>
-                    <td class="px-6 py-4 text-sm text-gray-600">
+                  <tr v-for="customer in paginatedCustomers" :key="customer.id" class="hover:bg-gray-50">
+                    <td class="max-w-[150px] truncate px-3 py-2 text-sm text-gray-900 md:max-w-[200px]">{{ customer.name }}</td>
+                    <td class="whitespace-nowrap px-3 py-2 text-sm text-gray-600">
                       {{ formatCents(customer.credit_limit_cents) }}
                     </td>
-                    <td class="px-6 py-4 text-sm text-gray-600">
+                    <td class="whitespace-nowrap px-3 py-2 text-sm text-gray-600">
                       {{ formatPaymentDueDay(customer.payment_due_day) }}
                     </td>
-                    <td class="px-6 py-4 text-sm text-gray-600">
-                      <div class="flex items-center gap-2">
-                        <span :class="isDebtVisible(customer.id) ? '' : 'blur-xs'">
-                          {{ formatCents(customer.current_debt_cents) }}
-                        </span>
-                        <button
-                          type="button"
-                          :aria-label="isDebtVisible(customer.id) ? 'Ocultar fiado atual' : 'Mostrar fiado atual'"
-                          class="min-h-11 min-w-11 flex items-center justify-center rounded text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
-                          @click="toggleDebtVisibility(customer.id)"
-                        >
-                          <svg
-                            v-if="isDebtVisible(customer.id)"
-                            xmlns="http://www.w3.org/2000/svg"
-                            class="h-4 w-4"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            stroke-width="2"
-                          >
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              d="M13.875 18.825A10.05 10.05 0 0112 19c-5.523 0-10-3.582-10-8 0-1.775.723-3.414 1.943-4.747m3.174-2.516A10.058 10.058 0 0112 3c5.523 0 10 3.582 10 8 0 2.043-.957 3.906-2.56 5.363M15 12a3 3 0 10-4.243 2.83M3 3l18 18"
-                            />
-                          </svg>
-                          <svg
-                            v-else
-                            xmlns="http://www.w3.org/2000/svg"
-                            class="h-4 w-4"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            stroke-width="2"
-                          >
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                            />
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              d="M2.458 12C3.732 7.943 7.523 5 12 5s8.268 2.943 9.542 7c-1.274 4.057-5.065 7-9.542 7S3.732 16.057 2.458 12z"
-                            />
-                          </svg>
-                        </button>
+                    <td class="whitespace-nowrap px-3 py-2 text-sm text-gray-600">
+                      <div class="flex items-center justify-center gap-2">
                         <button
                           v-if="customer.current_debt_cents > 0"
                           type="button"
                           :aria-label="`Cobrar cliente ${customer.name} pelo WhatsApp`"
-                          class="min-h-11 inline-flex items-center gap-1 rounded px-3 text-xs font-semibold text-success transition hover:bg-gray-100"
+                          class="min-h-11 inline-flex items-center gap-1 rounded bg-success/10 px-3 text-xs font-semibold text-success transition hover:bg-success/20"
                           @click="openWhatsAppModal(customer)"
                         >
                           <span>Cobrar 💰</span>
                         </button>
+
+                        <div class="flex items-center gap-1">
+                          <span :class="isDebtVisible(customer.id) ? '' : 'blur-xs'">
+                            {{ formatCents(customer.current_debt_cents) }}
+                          </span>
+                          <button
+                            type="button"
+                            :aria-label="isDebtVisible(customer.id) ? 'Ocultar fiado atual' : 'Mostrar fiado atual'"
+                            class="min-h-11 min-w-11 flex items-center justify-center rounded text-gray-500 transition hover:bg-gray-100"
+                            @click="toggleDebtVisibility(customer.id)"
+                          >
+                            <svg v-if="isDebtVisible(customer.id)" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-5.523 0-10-3.582-10-8 0-1.775.723-3.414 1.943-4.747m3.174-2.516A10.058 10.058 0 0112 3c5.523 0 10 3.582 10 8 0 2.043-.957 3.906-2.56 5.363M15 12a3 3 0 10-4.243 2.83M3 3l18 18" />
+                            </svg>
+                            <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5s8.268 2.943 9.542 7c-1.274 4.057-5.065 7-9.542 7S3.732 16.057 2.458 12z" />
+                            </svg>
+                          </button>
+                        </div>
+
                         <button
                           v-if="customer.current_debt_cents > 0"
                           type="button"
                           :aria-label="`Registrar pagamento de fiado de ${customer.name}`"
-                          class="min-h-11 inline-flex items-center gap-1 rounded px-3 text-xs font-semibold text-primary transition hover:bg-gray-100"
+                          class="min-h-11 inline-flex items-center gap-1 rounded bg-primary/10 px-3 text-xs font-semibold text-primary transition hover:bg-primary/20"
                           @click="openPaymentModal(customer)"
                         >
                           <span class="text-base leading-none select-none" aria-hidden="true">💲</span>
@@ -1509,7 +1486,7 @@ function submitWhatsAppForm(): void {
                         </button>
                       </div>
                     </td>
-                    <td class="px-6 py-4 text-sm">
+                    <td class="whitespace-nowrap px-3 py-2 text-sm">
                       <span
                         :class="[
                           'inline-block rounded-full px-3 py-1 text-xs font-semibold',
@@ -1521,7 +1498,7 @@ function submitWhatsAppForm(): void {
                         {{ customer.is_active ? "Ativo" : "Inativo" }}
                       </span>
                     </td>
-                    <td class="px-6 py-4 text-center">
+                    <td class="whitespace-nowrap px-3 py-2 text-center text-sm">
                       <button
                         type="button"
                         aria-label="Editar cliente"
@@ -1549,9 +1526,9 @@ function submitWhatsAppForm(): void {
               </table>
             </div>
 
-            <ul class="space-y-2 md:hidden">
+            <ul class="mt-4 space-y-2 md:hidden">
               <li
-                v-for="customer in customers"
+                v-for="customer in paginatedCustomers"
                 :key="customer.id"
                 class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
               >
@@ -1696,21 +1673,21 @@ function submitWhatsAppForm(): void {
 
         <!-- Pagination Controls -->
         <div
-          v-if="customers.length > 0 && totalPages > 1"
+          v-if="customers.length > 0 && customersTotalPages > 1"
           class="mt-6 flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4"
         >
           <div class="text-sm text-gray-600">
             Mostrando
-            <span class="font-semibold">{{ (currentPage - 1) * perPage + 1 }}</span>
+            <span class="font-semibold">{{ (customersCurrentPage - 1) * customersPerPage + 1 }}</span>
             –
-            <span class="font-semibold">{{ Math.min(currentPage * perPage, totalCustomers) }}</span>
-            de <span class="font-semibold">{{ totalCustomers }}</span> clientes
+            <span class="font-semibold">{{ Math.min(customersCurrentPage * customersPerPage, customers.length) }}</span>
+            de <span class="font-semibold">{{ customers.length }}</span> clientes
           </div>
 
           <div class="flex items-center gap-2">
             <button
               type="button"
-              :disabled="currentPage === 1"
+              :disabled="customersCurrentPage === 1"
               @click="goToPreviousPage"
               class="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition disabled:cursor-not-allowed disabled:opacity-50 hover:bg-gray-50"
             >
@@ -1725,7 +1702,7 @@ function submitWhatsAppForm(): void {
                 @click="goToPage(page)"
                 :class="[
                   'rounded px-2 py-1 text-sm font-medium transition',
-                  page === currentPage
+                  page === customersCurrentPage
                     ? 'bg-primary text-white'
                     : 'border border-gray-300 text-gray-700 hover:bg-gray-50',
                 ]"
@@ -1736,7 +1713,7 @@ function submitWhatsAppForm(): void {
 
             <button
               type="button"
-              :disabled="currentPage === totalPages"
+              :disabled="customersCurrentPage === customersTotalPages"
               @click="goToNextPage"
               class="rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition disabled:cursor-not-allowed disabled:opacity-50 hover:bg-gray-50"
             >
@@ -1748,90 +1725,112 @@ function submitWhatsAppForm(): void {
 
         <!-- ==================== ABA: Histórico de Compras ==================== -->
         <section v-if="activeTab === 'purchase-history'" class="mt-6">
-          <div class="mb-4 flex flex-col gap-2 sm:mb-6 sm:flex-row sm:flex-wrap sm:items-end sm:gap-4">
-            <div class="relative min-w-0 flex-1 sm:max-w-md">
-              <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Cliente</label>
-              <div class="flex gap-2">
-                <input
-                  v-model="historyCustomerSearchInput"
-                  type="text"
-                  placeholder="Buscar por nome ou telefone..."
-                  class="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 md:text-sm"
-                  @focus="openHistoryCustomerDropdown"
-                  @input="openHistoryCustomerDropdown"
-                />
-                <button
-                  v-if="selectedHistoryCustomer"
-                  type="button"
-                  aria-label="Limpar cliente selecionado no historico de compras"
-                  @click="clearSelectedHistoryCustomer"
-                  class="min-h-11 rounded-lg bg-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-300"
+          <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div class="flex flex-1 flex-wrap items-end gap-3">
+              <div class="relative min-w-0 flex-1 sm:max-w-md">
+                <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-400">Cliente</label>
+                <div class="flex gap-2">
+                  <input
+                    v-model="historyCustomerSearchInput"
+                    type="text"
+                    placeholder="Buscar por nome ou telefone..."
+                    class="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 md:text-sm"
+                    @focus="openHistoryCustomerDropdown"
+                    @input="openHistoryCustomerDropdown"
+                  />
+                  <button
+                    v-if="selectedHistoryCustomer"
+                    type="button"
+                    aria-label="Limpar cliente selecionado no historico de compras"
+                    @click="clearSelectedHistoryCustomer"
+                    class="min-h-11 rounded-lg bg-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-300"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div
+                  v-if="showHistoryCustomerDropdown && !selectedHistoryCustomer"
+                  class="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg"
                 >
-                  ✕
-                </button>
+                  <div v-if="loadingHistoryCustomers" class="p-3 text-center text-sm text-gray-500">
+                    Carregando clientes...
+                  </div>
+                  <div v-else-if="historyCustomersError" class="p-3 text-sm text-danger">
+                    {{ historyCustomersError }}
+                  </div>
+                  <div v-else-if="filteredHistoryCustomers.length === 0" class="p-3 text-center text-sm text-gray-500">
+                    Nenhum cliente encontrado.
+                  </div>
+                  <button
+                    v-for="customer in filteredHistoryCustomers"
+                    :key="customer.id"
+                    type="button"
+                    class="flex w-full items-center justify-between border-b border-gray-100 px-4 py-3 text-left hover:bg-gray-50"
+                    @click="selectHistoryCustomer(customer)"
+                  >
+                    <div>
+                      <span class="block text-sm font-medium text-gray-900">{{ customer.name }}</span>
+                      <span class="text-xs text-gray-500">
+                        {{ customer.phone ? formatPhoneForDisplay(customer.phone) : "Sem telefone" }}
+                      </span>
+                    </div>
+                    <span
+                      :class="[
+                        'text-xs font-semibold',
+                        customer.is_active ? 'text-green-700' : 'text-gray-500',
+                      ]"
+                    >
+                      {{ customer.is_active ? "Ativo" : "Inativo" }}
+                    </span>
+                  </button>
+                </div>
               </div>
 
-              <div
-                v-if="showHistoryCustomerDropdown && !selectedHistoryCustomer"
-                class="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg"
-              >
-                <div v-if="loadingHistoryCustomers" class="p-3 text-center text-sm text-gray-500">
-                  Carregando clientes...
-                </div>
-                <div v-else-if="historyCustomersError" class="p-3 text-sm text-danger">
-                  {{ historyCustomersError }}
-                </div>
-                <div v-else-if="filteredHistoryCustomers.length === 0" class="p-3 text-center text-sm text-gray-500">
-                  Nenhum cliente encontrado.
-                </div>
-                <button
-                  v-for="customer in filteredHistoryCustomers"
-                  :key="customer.id"
-                  type="button"
-                  class="flex w-full items-center justify-between border-b border-gray-100 px-4 py-3 text-left hover:bg-gray-50"
-                  @click="selectHistoryCustomer(customer)"
-                >
-                  <div>
-                    <span class="block text-sm font-medium text-gray-900">{{ customer.name }}</span>
-                    <span class="text-xs text-gray-500">
-                      {{ customer.phone ? formatPhoneForDisplay(customer.phone) : "Sem telefone" }}
-                    </span>
-                  </div>
-                  <span
-                    :class="[
-                      'text-xs font-semibold',
-                      customer.is_active ? 'text-green-700' : 'text-gray-500',
-                    ]"
+              <div class="flex items-end gap-2">
+                <div>
+                  <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-400">Mês</label>
+                  <select
+                    v-model.number="selectedHistoryMonth"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 md:text-sm"
                   >
-                    {{ customer.is_active ? "Ativo" : "Inativo" }}
-                  </span>
-                </button>
+                    <option v-for="month in monthOptions" :key="month.value" :value="month.value">
+                      {{ month.label }}
+                    </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Ano</label>
+                  <select
+                    v-model.number="selectedHistoryYear"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 md:text-sm"
+                  >
+                    <option v-for="year in yearOptions" :key="year" :value="year">
+                      {{ year }}
+                    </option>
+                  </select>
+                </div>
               </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-2 sm:flex sm:items-end sm:gap-3">
-              <div>
-                <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Mês</label>
-                <select
-                  v-model.number="selectedHistoryMonth"
-                  class="w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 md:text-sm"
-                >
-                  <option v-for="month in monthOptions" :key="month.value" :value="month.value">
-                    {{ month.label }}
-                  </option>
-                </select>
-              </div>
-
-              <div>
-                <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Ano</label>
-                <select
-                  v-model.number="selectedHistoryYear"
-                  class="w-full rounded-lg border border-gray-300 px-3 py-2 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 md:text-sm"
-                >
-                  <option v-for="year in yearOptions" :key="year" :value="year">
-                    {{ year }}
-                  </option>
-                </select>
+            <!-- Resumo do Período Unificado no topo -->
+            <div v-if="selectedHistoryCustomer && !loadingFiadoHistory" class="flex shrink-0 gap-2">
+              <div class="flex flex-col items-center gap-1 rounded-lg border border-gray-100 bg-white p-2 px-4 shadow-sm sm:flex-row sm:gap-6">
+                <div class="text-center sm:text-left">
+                  <p class="text-[10px] font-bold uppercase tracking-wider text-gray-400">Fiado Período</p>
+                  <p class="text-sm font-bold text-gray-800">{{ formatCents(fiadoHistorySummary.fiado_period_cents) }}</p>
+                </div>
+                <div class="h-8 w-px bg-gray-100 hidden sm:block"></div>
+                <div class="text-center sm:text-left">
+                  <p class="text-[10px] font-bold uppercase tracking-wider text-gray-400">Em Aberto</p>
+                  <p class="text-sm font-bold text-warning">{{ formatCents(fiadoHistorySummary.fiado_open_cents) }}</p>
+                </div>
+                <div class="h-8 w-px bg-gray-100 hidden sm:block"></div>
+                <div class="text-center sm:text-left">
+                  <p class="text-[10px] font-bold uppercase tracking-wider text-gray-400">Pago Período</p>
+                  <p class="text-sm font-bold text-success">{{ formatCents(fiadoHistorySummary.fiado_paid_cents) }}</p>
+                </div>
               </div>
             </div>
           </div>
@@ -1843,28 +1842,9 @@ function submitWhatsAppForm(): void {
             Selecione um cliente para visualizar o histórico de compras.
           </div>
 
-          <div v-else class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div v-else class="grid grid-cols-1 gap-6">
             <div>
-              <div v-if="!loadingFiadoHistory" class="mb-4 grid grid-cols-3 gap-2 xl:hidden">
-                <div class="rounded-lg bg-surface p-3 text-center">
-                  <p class="text-xs text-gray-400">Fiado do período</p>
-                  <p class="text-sm font-bold text-gray-800">
-                    {{ formatCents(fiadoHistorySummary.fiado_period_cents) }}
-                  </p>
-                </div>
-                <div class="rounded-lg bg-surface p-3 text-center">
-                  <p class="text-xs text-gray-400">Em aberto</p>
-                  <p class="text-sm font-bold text-warning">
-                    {{ formatCents(fiadoHistorySummary.fiado_open_cents) }}
-                  </p>
-                </div>
-                <div class="rounded-lg bg-surface p-3 text-center">
-                  <p class="text-xs text-gray-400">Pago no período</p>
-                  <p class="text-sm font-bold text-success">
-                    {{ formatCents(fiadoHistorySummary.fiado_paid_cents) }}
-                  </p>
-                </div>
-              </div>
+
 
               <div v-if="loadingFiadoHistory" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
                 <div v-for="index in 6" :key="index" class="h-10 animate-pulse rounded bg-gray-100"></div>
@@ -1908,7 +1888,7 @@ function submitWhatsAppForm(): void {
                     </select>
                   </div>
                 </div>
-                <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
+                <div class="w-full overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
                   <table class="w-full min-w-[720px]">
                     <caption class="sr-only">Histórico de compras em fiado do cliente selecionado</caption>
                     <thead class="bg-gray-50">
@@ -2042,129 +2022,116 @@ function submitWhatsAppForm(): void {
               </template>
             </div>
 
-            <aside class="hidden h-fit rounded-lg border border-gray-200 bg-white p-4 xl:sticky xl:top-24 xl:block">
-              <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-500">
-                Resumo do Período
-              </h3>
 
-              <div v-if="loadingFiadoHistory" class="mt-4 space-y-3">
-                <div class="h-14 animate-pulse rounded bg-gray-100"></div>
-                <div class="h-14 animate-pulse rounded bg-gray-100"></div>
-                <div class="h-14 animate-pulse rounded bg-gray-100"></div>
-              </div>
-
-              <div v-else class="mt-4 space-y-3">
-                <div class="rounded bg-gray-50 p-3">
-                  <p class="text-xs font-semibold uppercase text-gray-500">Fiado do Período</p>
-                  <p class="mt-1 text-lg font-bold text-gray-900">
-                    {{ formatCents(fiadoHistorySummary.fiado_period_cents) }}
-                  </p>
-                </div>
-
-                <div class="rounded bg-gray-50 p-3">
-                  <p class="text-xs font-semibold uppercase text-gray-500">Fiado em Aberto</p>
-                  <p class="mt-1 text-lg font-bold text-warning">
-                    {{ formatCents(fiadoHistorySummary.fiado_open_cents) }}
-                  </p>
-                </div>
-
-                <div class="rounded bg-gray-50 p-3">
-                  <p class="text-xs font-semibold uppercase text-gray-500">Fiado Pago no Período</p>
-                  <p class="mt-1 text-lg font-bold text-success">
-                    {{ formatCents(fiadoHistorySummary.fiado_paid_cents) }}
-                  </p>
-                </div>
-              </div>
-            </aside>
           </div>
         </section>
 
         <!-- ==================== ABA: Histórico de Pagamentos ==================== -->
         <section v-if="activeTab === 'payment-history'" class="mt-6">
-          <div class="mb-6 flex flex-wrap items-end gap-4">
-            <div class="relative w-full max-w-md">
-              <label class="mb-1 block text-sm font-medium text-gray-700">Selecione o cliente</label>
-              <div class="flex gap-2">
-                <input
-                  v-model="historyCustomerSearchInput"
-                  type="text"
-                  placeholder="Buscar por nome ou telefone..."
-                  class="flex-1 rounded border border-gray-300 px-4 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  @focus="openHistoryCustomerDropdown"
-                  @input="openHistoryCustomerDropdown"
-                />
-                <button
-                  v-if="selectedHistoryCustomer"
-                  type="button"
-                  aria-label="Limpar cliente selecionado no historico de pagamentos"
-                  @click="clearSelectedHistoryCustomer"
-                  class="rounded bg-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-300"
+          <div class="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div class="flex flex-1 flex-wrap items-end gap-4">
+              <div class="relative w-full max-w-md">
+                <label class="mb-1 block text-sm font-medium text-gray-700">Selecione o cliente</label>
+                <div class="flex gap-2">
+                  <input
+                    v-model="historyCustomerSearchInput"
+                    type="text"
+                    placeholder="Buscar por nome ou telefone..."
+                    class="flex-1 rounded border border-gray-300 px-4 py-2 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    @focus="openHistoryCustomerDropdown"
+                    @input="openHistoryCustomerDropdown"
+                  />
+                  <button
+                    v-if="selectedHistoryCustomer"
+                    type="button"
+                    aria-label="Limpar cliente selecionado no historico de pagamentos"
+                    @click="clearSelectedHistoryCustomer"
+                    class="rounded bg-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-300"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div
+                  v-if="showHistoryCustomerDropdown && !selectedHistoryCustomer"
+                  class="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg"
                 >
-                  ✕
-                </button>
+                  <div v-if="loadingHistoryCustomers" class="p-3 text-center text-sm text-gray-500">
+                    Carregando clientes...
+                  </div>
+                  <div v-else-if="historyCustomersError" class="p-3 text-sm text-danger">
+                    {{ historyCustomersError }}
+                  </div>
+                  <div v-else-if="filteredHistoryCustomers.length === 0" class="p-3 text-center text-sm text-gray-500">
+                    Nenhum cliente encontrado.
+                  </div>
+                  <button
+                    v-for="customer in filteredHistoryCustomers"
+                    :key="customer.id"
+                    type="button"
+                    class="flex w-full items-center justify-between border-b border-gray-100 px-4 py-3 text-left hover:bg-gray-50"
+                    @click="selectHistoryCustomer(customer)"
+                  >
+                    <div>
+                      <span class="block text-sm font-medium text-gray-900">{{ customer.name }}</span>
+                      <span class="text-xs text-gray-500">
+                        {{ customer.phone ? formatPhoneForDisplay(customer.phone) : "Sem telefone" }}
+                      </span>
+                    </div>
+                    <span
+                      :class="[
+                        'text-xs font-semibold',
+                        customer.is_active ? 'text-green-700' : 'text-gray-500',
+                      ]"
+                    >
+                      {{ customer.is_active ? "Ativo" : "Inativo" }}
+                    </span>
+                  </button>
+                </div>
               </div>
 
-              <div
-                v-if="showHistoryCustomerDropdown && !selectedHistoryCustomer"
-                class="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg"
-              >
-                <div v-if="loadingHistoryCustomers" class="p-3 text-center text-sm text-gray-500">
-                  Carregando clientes...
-                </div>
-                <div v-else-if="historyCustomersError" class="p-3 text-sm text-danger">
-                  {{ historyCustomersError }}
-                </div>
-                <div v-else-if="filteredHistoryCustomers.length === 0" class="p-3 text-center text-sm text-gray-500">
-                  Nenhum cliente encontrado.
-                </div>
-                <button
-                  v-for="customer in filteredHistoryCustomers"
-                  :key="customer.id"
-                  type="button"
-                  class="flex w-full items-center justify-between border-b border-gray-100 px-4 py-3 text-left hover:bg-gray-50"
-                  @click="selectHistoryCustomer(customer)"
-                >
-                  <div>
-                    <span class="block text-sm font-medium text-gray-900">{{ customer.name }}</span>
-                    <span class="text-xs text-gray-500">
-                      {{ customer.phone ? formatPhoneForDisplay(customer.phone) : "Sem telefone" }}
-                    </span>
-                  </div>
-                  <span
-                    :class="[
-                      'text-xs font-semibold',
-                      customer.is_active ? 'text-green-700' : 'text-gray-500',
-                    ]"
+              <div class="flex items-end gap-3">
+                <div>
+                  <label class="mb-1 block text-sm font-medium text-gray-700">Mês</label>
+                  <select
+                    v-model.number="selectedHistoryMonth"
+                    class="rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                   >
-                    {{ customer.is_active ? "Ativo" : "Inativo" }}
-                  </span>
-                </button>
+                    <option v-for="month in monthOptions" :key="month.value" :value="month.value">
+                      {{ month.label }}
+                    </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-sm font-medium text-gray-700">Ano</label>
+                  <select
+                    v-model.number="selectedHistoryYear"
+                    class="rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option v-for="year in yearOptions" :key="year" :value="year">
+                      {{ year }}
+                    </option>
+                  </select>
+                </div>
               </div>
             </div>
 
-            <div class="flex items-end gap-3">
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-700">Mês</label>
-                <select
-                  v-model.number="selectedHistoryMonth"
-                  class="rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                >
-                  <option v-for="month in monthOptions" :key="month.value" :value="month.value">
-                    {{ month.label }}
-                  </option>
-                </select>
-              </div>
-
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-700">Ano</label>
-                <select
-                  v-model.number="selectedHistoryYear"
-                  class="rounded border border-gray-300 px-3 py-2 text-base md:text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                >
-                  <option v-for="year in yearOptions" :key="year" :value="year">
-                    {{ year }}
-                  </option>
-                </select>
+            <!-- Resumo do Período no topo -->
+            <div v-if="selectedHistoryCustomer" class="flex shrink-0 gap-4">
+              <div class="flex flex-col rounded-lg border border-gray-100 bg-white p-3 shadow-sm md:flex-row md:items-center md:gap-4">
+                <div class="border-gray-100 md:border-r md:pr-4">
+                  <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Pago no Período</p>
+                  <p class="text-lg font-bold text-success">
+                    {{ formatCents(paymentHistorySummary.total_paid_period_cents) }}
+                  </p>
+                </div>
+                <div class="mt-2 pt-2 border-t border-gray-100 md:mt-0 md:border-t-0 md:pt-0">
+                  <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Fiado em Aberto</p>
+                  <p class="text-lg font-bold text-warning">
+                    {{ formatCents(paymentHistorySummary.fiado_open_cents) }}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -2176,7 +2143,7 @@ function submitWhatsAppForm(): void {
             Selecione um cliente para visualizar o histórico de pagamentos de fiado.
           </div>
 
-          <div v-else class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div v-else class="grid grid-cols-1 gap-6">
             <div>
               <div v-if="loadingPaymentHistory" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
                 <div v-for="index in 6" :key="index" class="h-10 animate-pulse rounded bg-gray-100"></div>
@@ -2220,7 +2187,7 @@ function submitWhatsAppForm(): void {
                     </select>
                   </div>
                 </div>
-                <div class="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
+                <div class="w-full overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
                   <table class="w-full min-w-[760px]">
                     <caption class="sr-only">Histórico de pagamentos de fiado do cliente selecionado</caption>
                     <thead class="bg-gray-50">
@@ -2336,32 +2303,7 @@ function submitWhatsAppForm(): void {
               </template>
             </div>
 
-            <aside class="h-fit rounded-lg border border-gray-200 bg-white p-4 xl:sticky xl:top-24">
-              <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-500">
-                Resumo do Período
-              </h3>
 
-              <div v-if="loadingPaymentHistory" class="mt-4 space-y-3">
-                <div class="h-14 animate-pulse rounded bg-gray-100"></div>
-                <div class="h-14 animate-pulse rounded bg-gray-100"></div>
-              </div>
-
-              <div v-else class="mt-4 space-y-3">
-                <div class="rounded bg-gray-50 p-3">
-                  <p class="text-xs font-semibold uppercase text-gray-500">Fiado Pago no Período</p>
-                  <p class="mt-1 text-lg font-bold text-success">
-                    {{ formatCents(paymentHistorySummary.total_paid_period_cents) }}
-                  </p>
-                </div>
-
-                <div class="rounded bg-gray-50 p-3">
-                  <p class="text-xs font-semibold uppercase text-gray-500">Fiado em Aberto</p>
-                  <p class="mt-1 text-lg font-bold text-warning">
-                    {{ formatCents(paymentHistorySummary.fiado_open_cents) }}
-                  </p>
-                </div>
-              </div>
-            </aside>
           </div>
         </section>
 
