@@ -15,6 +15,9 @@ import { stockMovementRouter } from "./stock-movement.routes.js";
 import { notificationRouter } from "./notification.routes.js";
 import { dashboardRouter } from "./dashboard.routes.js";
 import { printRouter } from "./print.routes.js";
+import { backupRouter } from "./backup.routes.js";
+import { networkRouter } from "./network.routes.js";
+import { transactionRouter } from "./transaction.routes.js";
 
 export const router = Router();
 
@@ -33,4 +36,8 @@ router.use("/control", controlRouter);
 router.use("/stock-movements", stockMovementRouter);
 router.use("/notifications", notificationRouter);
 router.use("/print", printRouter);
+router.use("/backups", backupRouter);
+router.use("/network", networkRouter);
+router.use("/transactions", transactionRouter);
+
 router.use("/", dashboardRouter);

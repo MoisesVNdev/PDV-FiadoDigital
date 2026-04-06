@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { config } from "./index.js";
+import { logInfo } from "../utils/logger.js";
 
 const dbPath = config.databaseUrl.replace("file:", "");
 const adapter = new PrismaBetterSqlite3({ url: dbPath });
@@ -14,5 +15,5 @@ export async function initDatabase(): Promise<void> {
   await prisma.$executeRawUnsafe("PRAGMA journal_mode=WAL;");
   await prisma.$executeRawUnsafe("PRAGMA busy_timeout=5000;");
 
-  console.log("[PDV DB] Conectado ao SQLite com WAL mode");
+  logInfo("Conectado ao SQLite com WAL mode", { tag: "PDV DB" });
 }

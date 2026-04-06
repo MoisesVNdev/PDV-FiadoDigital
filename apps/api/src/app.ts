@@ -5,10 +5,12 @@ import cookieParser from "cookie-parser";
 import { config } from "./config/index.js";
 import { router } from "./routes/index.js";
 import { errorHandler } from "./middlewares/error-handler.middleware.js";
+import { requestIdMiddleware } from "./middlewares/request-id.middleware.js";
 
 export function createApp(): express.Application {
   const app = express();
 
+  app.use(requestIdMiddleware);
   app.use(helmet());
   app.use(
     cors({
