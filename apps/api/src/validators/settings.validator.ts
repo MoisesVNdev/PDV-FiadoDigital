@@ -97,6 +97,15 @@ const updateGeneralSettingsSchema = z
     fiado_alert_on_due_day: z.boolean().optional(),
     whatsapp_message_fiado_vencido: z.string().trim().max(2000).optional(),
     whatsapp_message_fiado_a_vencer: z.string().trim().max(2000).optional(),
+    backup_path: z.string().trim().max(500).optional(),
+    backup_frequency: z.string().optional(),
+    backup_retention: z.number().int().optional(),
+    backup_cloud_enabled: z.boolean().optional(),
+    backup_cloud_token: z.string().trim().max(500).optional(),
+    backup_encryption_enabled: z.boolean().optional(),
+    backup_password: z.string().max(128).optional(),
+    backup_time: z.string().optional(),
+    password: z.string().max(128).optional(),
   })
   .passthrough()
   .superRefine((data, context) => {
@@ -150,6 +159,15 @@ const updateGeneralSettingsSchema = z
       whatsapp_message_fiado_vencido: data.whatsapp_message_fiado_vencido,
       whatsapp_message_fiado_a_vencer: data.whatsapp_message_fiado_a_vencer,
       stock_alert_type_settings: stockAlertTypeSettings,
+      backup_path: data.backup_path,
+      backup_frequency: data.backup_frequency,
+      backup_retention: data.backup_retention,
+      backup_cloud_enabled: data.backup_cloud_enabled,
+      backup_cloud_token: data.backup_cloud_token,
+      backup_encryption_enabled: data.backup_encryption_enabled,
+      backup_password: data.backup_password,
+      backup_time: data.backup_time,
+      password: data.password,
     };
   })
   .refine(
@@ -173,9 +191,17 @@ const updateGeneralSettingsSchema = z
       data.fiado_alert_on_due_day !== undefined ||
       data.whatsapp_message_fiado_vencido !== undefined ||
       data.whatsapp_message_fiado_a_vencer !== undefined ||
+      data.backup_path !== undefined ||
+      data.backup_frequency !== undefined ||
+      data.backup_retention !== undefined ||
+      data.backup_cloud_enabled !== undefined ||
+      data.backup_cloud_token !== undefined ||
+      data.backup_encryption_enabled !== undefined ||
+      data.backup_password !== undefined ||
+      data.backup_time !== undefined ||
       Object.keys(data.stock_alert_type_settings).length > 0,
     {
-      message: "Informe ao menos um limite para atualização.",
+      message: "Informe ao menos um campo para atualização.",
       path: ["discount_limit_daily"],
     },
   );

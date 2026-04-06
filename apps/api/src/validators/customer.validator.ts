@@ -13,15 +13,22 @@ const customerBaseSchema = z.object({
 const createCustomerSchema = customerBaseSchema;
 const updateCustomerSchema = customerBaseSchema.partial();
 
-const listCustomersQuerySchema = z.object({
+export const listCustomersQuerySchema = z.object({
   search: z.string().optional(),
-  only_active: z.enum(["true", "false"]).optional(),
+  only_active: z.coerce.boolean().optional(),
   page: z.coerce.number().int().positive().default(1),
   per_page: z.coerce.number().int().min(1).max(1000).default(10),
   sort_by: z
     .enum(["name", "credit_limit_cents", "current_debt_cents", "payment_due_day", "is_active"])
     .optional(),
   sort_order: z.enum(["asc", "desc"]).default("asc"),
+});
+
+export const historyQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  per_page: z.coerce.number().int().min(1).max(1000).default(10),
+  month: z.coerce.number().int().min(1).max(12).optional(),
+  year: z.coerce.number().int().min(2000).max(9999).optional(),
 });
 
 const payDebtSchema = z.object({

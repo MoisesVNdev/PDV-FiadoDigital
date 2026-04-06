@@ -1,7 +1,6 @@
 import type { DashboardSummary } from "@pdv/shared";
 import { prisma } from "../config/database.js";
 import { config } from "../config/index.js";
-import type { PeriodPreset } from "../services/dashboard.service.js";
 
 const PAYMENT_METHOD_KEYS = ["cash", "pix", "credit_card", "debit_card", "fiado"] as const;
 
@@ -98,62 +97,30 @@ function getStartOfDay(date: Date): Date {
   return createUtcDateFromZonedParts(zoned.year, zoned.month, zoned.day, 0, 0, 0, 0);
 }
 
-function getEndOfDay(date: Date): Date {
-  const zoned = getZonedDateParts(date);
-
-  return createUtcDateFromZonedParts(zoned.year, zoned.month, zoned.day, 23, 59, 59, 999);
-}
-
-function resolveDateRange(preset: PeriodPreset): { from: Date; to: Date } {
-  const now = new Date();
-
-  if (preset === "today") {
-    // Retorna do início do dia (00:00:00) até o momento atual
-    return {
-      from: getStartOfDay(now),
-      to:   now,
-    };
-  }
-
-  if (preset === "yesterday") {
-    const yesterday = shiftZonedDate(now, -1);
-    return {
-      from: getStartOfDay(yesterday),
-      to:   getEndOfDay(yesterday),
-    };
-  }
-
-  if (preset === "week") {
-    const weekAgo = shiftZonedDate(now, -6);
-    return {
-      from: getStartOfDay(weekAgo),
-      to:   now,
-    };
-  }
-
-  if (preset === "month") {
-    const zoned = getZonedDateParts(now);
-    const startOfMonth = createUtcDateFromZonedParts(zoned.year, zoned.month, 1, 12, 0, 0, 0);
-    return {
-      from: getStartOfDay(startOfMonth),
-      to:   now,
-    };
-  }
-
-  // Fallback (nunca deve ser atingido, mas por segurança)
-  return {
-    from: getStartOfDay(now),
-    to:   now,
-  };
-}
-
 export class DashboardRepository {
-  async getSummary(preset: PeriodPreset = "today"): Promise<DashboardSummary> {
+  async getSummary(startDate?: string, endDate?: string): Promise<DashboardSummary> {
     const now = new Date();
     const startOfDay = getStartOfDay(now);
     const startOfYesterday = getStartOfDay(shiftZonedDate(now, -1));
 
-    const { from: periodFrom, to: periodTo } = resolveDateRange(preset);
+    let periodFrom: Date;
+    let periodTo: Date;
+
+    if (startDate && endDate) {
+      const parsedStart = new Date(startDate);
+      const parsedEnd = new Date(endDate);
+
+      if (!isNaN(parsedStart.getTime()) && !isNaN(parsedEnd.getTime())) {
+        periodFrom = parsedStart;
+        periodTo = parsedEnd;
+      } else {
+        periodFrom = startOfDay;
+        periodTo = now;
+      }
+    } else {
+      periodFrom = startOfDay;
+      periodTo = now;
+    }
 
     const [
       salesToday,

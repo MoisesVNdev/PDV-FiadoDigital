@@ -1,76 +1,21 @@
 import type { Request, Response, NextFunction } from "express";
 import { CustomerService } from "../services/customer.service.js";
-import type { CustomerQueryParams } from "@pdv/shared";
+import { listCustomersQuerySchema, historyQuerySchema } from "../validators/customer.validator.js";
 
 const customerService = new CustomerService();
-
-function parsePositiveQueryNumber(rawValue: unknown): number | undefined {
-  if (typeof rawValue === "number") {
-    if (!Number.isFinite(rawValue) || rawValue <= 0) {
-      return undefined;
-    }
-
-    return Math.trunc(rawValue);
-  }
-
-  if (typeof rawValue !== "string") {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(rawValue, 10);
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return undefined;
-  }
-
-  return parsed;
-}
-
-function parseSortBy(value: unknown): CustomerQueryParams["sort_by"] {
-  const allowedValues: Array<NonNullable<CustomerQueryParams["sort_by"]>> = [
-    "name",
-    "credit_limit_cents",
-    "current_debt_cents",
-    "payment_due_day",
-    "is_active",
-  ];
-
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  if (allowedValues.includes(value as NonNullable<CustomerQueryParams["sort_by"]>)) {
-    return value as NonNullable<CustomerQueryParams["sort_by"]>;
-  }
-
-  return undefined;
-}
-
-function parseSortOrder(value: unknown): CustomerQueryParams["sort_order"] {
-  if (value === "desc") {
-    return "desc";
-  }
-
-  return "asc";
-}
 
 export class CustomerController {
   async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const search = typeof req.query.search === "string" ? req.query.search.trim() : undefined;
-      const onlyActive = req.query.only_active === "true";
-      const page = parsePositiveQueryNumber(req.query.page) ?? 1;
-      const perPage = parsePositiveQueryNumber(req.query.per_page) ?? 10;
-      const sortBy = parseSortBy(req.query.sort_by);
-      const sortOrder = parseSortOrder(req.query.sort_order);
+      const query = listCustomersQuerySchema.parse(req.query);
 
       const result = await customerService.list({
-        search,
-        only_active: onlyActive,
-        page,
-        per_page: perPage,
-        sort_by: sortBy,
-        sort_order: sortOrder,
+        search: query.search,
+        only_active: query.only_active,
+        page: query.page,
+        per_page: query.per_page,
+        sort_by: query.sort_by,
+        sort_order: query.sort_order,
       });
 
       res.json({ success: true, data: result.data, pagination: result.pagination });
@@ -95,17 +40,11 @@ export class CustomerController {
   async getFiadoHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const customerId = req.params.id as string;
-      const page = parsePositiveQueryNumber(req.query.page) ?? 1;
-      const perPage = parsePositiveQueryNumber(req.query.per_page) ?? 10;
-      const month = parsePositiveQueryNumber(req.query.month);
-      const year = parsePositiveQueryNumber(req.query.year);
+      const query = historyQuerySchema.parse(req.query);
 
-      const validMonth = month && month >= 1 && month <= 12 ? month : undefined;
-      const validYear = year && year >= 2000 && year <= 9999 ? year : undefined;
-
-      const result = await customerService.getFiadoHistory(customerId, page, perPage, {
-        month: validMonth,
-        year: validYear,
+      const result = await customerService.getFiadoHistory(customerId, query.page, query.per_page, {
+        month: query.month,
+        year: query.year,
       });
       res.json({ success: true, data: result.data, pagination: result.pagination, summary: result.summary });
     } catch (error) {
@@ -116,17 +55,11 @@ export class CustomerController {
   async getPaymentHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const customerId = req.params.id as string;
-      const page = parsePositiveQueryNumber(req.query.page) ?? 1;
-      const perPage = parsePositiveQueryNumber(req.query.per_page) ?? 10;
-      const month = parsePositiveQueryNumber(req.query.month);
-      const year = parsePositiveQueryNumber(req.query.year);
+      const query = historyQuerySchema.parse(req.query);
 
-      const validMonth = month && month >= 1 && month <= 12 ? month : undefined;
-      const validYear = year && year >= 2000 && year <= 9999 ? year : undefined;
-
-      const result = await customerService.getPaymentHistory(customerId, page, perPage, {
-        month: validMonth,
-        year: validYear,
+      const result = await customerService.getPaymentHistory(customerId, query.page, query.per_page, {
+        month: query.month,
+        year: query.year,
       });
 
       res.json({ success: true, data: result.data, pagination: result.pagination, summary: result.summary });

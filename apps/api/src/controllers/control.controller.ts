@@ -1,42 +1,14 @@
 import type { NextFunction, Request, Response } from "express";
 import { ControlService } from "../services/control.service.js";
+import { dateRangeQuerySchema, stockSummaryQuerySchema } from "../validators/control.validator.js";
 
 const controlService = new ControlService();
-
-function getStringQuery(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function getNumberQuery(value: unknown): number | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-
-  if (Number.isNaN(parsed)) {
-    return undefined;
-  }
-
-  return parsed;
-}
 
 export class ControlController {
   async getStockSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const data = await controlService.getStockSummary({
-        product_type_id: getStringQuery(req.query.product_type_id),
-        brand_id: getStringQuery(req.query.brand_id),
-        page: getNumberQuery(req.query.page),
-        per_page: getNumberQuery(req.query.per_page),
-        sort_by: getStringQuery(req.query.sort_by) as "name" | "type" | "brand" | "stock" | "average_cost" | "stock_value" | undefined,
-        sort_order: getStringQuery(req.query.sort_order) as "asc" | "desc" | undefined,
-      });
+      const query = stockSummaryQuerySchema.parse(req.query);
+      const data = await controlService.getStockSummary(query);
 
       res.json({ success: true, data });
     } catch (error) {
@@ -46,10 +18,8 @@ export class ControlController {
 
   async getCashSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const data = await controlService.getCashSummary(
-        getStringQuery(req.query.start_date),
-        getStringQuery(req.query.end_date),
-      );
+      const query = dateRangeQuerySchema.parse(req.query);
+      const data = await controlService.getCashSummary(query.start_date, query.end_date);
       res.json({ success: true, data });
     } catch (error) {
       next(error);
@@ -58,10 +28,8 @@ export class ControlController {
 
   async getDiscountSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const data = await controlService.getDiscountSummary(
-        getStringQuery(req.query.start_date),
-        getStringQuery(req.query.end_date),
-      );
+      const query = dateRangeQuerySchema.parse(req.query);
+      const data = await controlService.getDiscountSummary(query.start_date, query.end_date);
       res.json({ success: true, data });
     } catch (error) {
       next(error);
@@ -70,10 +38,8 @@ export class ControlController {
 
   async getCancellations(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const data = await controlService.getCancellations(
-        getStringQuery(req.query.start_date),
-        getStringQuery(req.query.end_date),
-      );
+      const query = dateRangeQuerySchema.parse(req.query);
+      const data = await controlService.getCancellations(query.start_date, query.end_date);
       res.json({ success: true, data });
     } catch (error) {
       next(error);

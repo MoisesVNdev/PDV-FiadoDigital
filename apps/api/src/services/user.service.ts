@@ -67,7 +67,17 @@ export class UserService {
     return userRepository.update(id, updateData);
   }
 
-  async deactivate(id: string) {
-    return userRepository.softDelete(id);
+  async deactivate(id: string, operatorId: string) {
+    const result = await userRepository.softDelete(id);
+
+    await auditLogRepository.create({
+      action: "user_deleted",
+      actor_id: operatorId,
+      entity_type: "user",
+      entity_id: id,
+      details: { target_user_id: id },
+    });
+
+    return result;
   }
 }

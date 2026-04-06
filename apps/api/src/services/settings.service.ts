@@ -34,6 +34,14 @@ const FIADO_ALERT_AT_90_PERCENT_SETTING = "fiado_alert_at_90_percent";
 const FIADO_ALERT_ON_DUE_DAY_SETTING = "fiado_alert_on_due_day";
 const WHATSAPP_MESSAGE_FIADO_VENCIDO_SETTING = "whatsapp_message_fiado_vencido";
 const WHATSAPP_MESSAGE_FIADO_A_VENCER_SETTING = "whatsapp_message_fiado_a_vencer";
+const BACKUP_PATH_SETTING = "backup_path";
+const BACKUP_FREQUENCY_SETTING = "backup_frequency";
+const BACKUP_RETENTION_SETTING = "backup_retention";
+const BACKUP_CLOUD_ENABLED_SETTING = "backup_cloud_enabled";
+const BACKUP_CLOUD_TOKEN_SETTING = "backup_cloud_token";
+const BACKUP_ENCRYPTION_ENABLED_SETTING = "backup_encryption_enabled";
+const BACKUP_PASSWORD_SETTING = "backup_password";
+const BACKUP_TIME_SETTING = "backup_time";
 
 function toNumericSettingValue(value: number): `${number}` {
   return String(value) as `${number}`;
@@ -138,6 +146,14 @@ export class SettingsService {
     fiado_alert_on_due_day: boolean;
     whatsapp_message_fiado_vencido: string;
     whatsapp_message_fiado_a_vencer: string;
+    backup_path?: string;
+    backup_frequency?: string;
+    backup_retention?: number;
+    backup_cloud_enabled?: boolean;
+    backup_cloud_token?: string;
+    backup_encryption_enabled?: boolean;
+    backup_password?: string;
+    backup_time?: string;
     stock_alert_type_settings: Record<string, number>;
   }> {
     const keys = [
@@ -160,6 +176,14 @@ export class SettingsService {
       FIADO_ALERT_ON_DUE_DAY_SETTING,
       WHATSAPP_MESSAGE_FIADO_VENCIDO_SETTING,
       WHATSAPP_MESSAGE_FIADO_A_VENCER_SETTING,
+      BACKUP_PATH_SETTING,
+      BACKUP_FREQUENCY_SETTING,
+      BACKUP_RETENTION_SETTING,
+      BACKUP_CLOUD_ENABLED_SETTING,
+      BACKUP_CLOUD_TOKEN_SETTING,
+      BACKUP_ENCRYPTION_ENABLED_SETTING,
+      BACKUP_PASSWORD_SETTING,
+      BACKUP_TIME_SETTING,
     ] as const satisfies readonly SettingKey[];
 
     const [settings, stockAlertTypeSettings] = await Promise.all([
@@ -200,6 +224,14 @@ export class SettingsService {
       fiado_alert_on_due_day: map.get(FIADO_ALERT_ON_DUE_DAY_SETTING) !== "false",
       whatsapp_message_fiado_vencido: map.get(WHATSAPP_MESSAGE_FIADO_VENCIDO_SETTING) ?? "",
       whatsapp_message_fiado_a_vencer: map.get(WHATSAPP_MESSAGE_FIADO_A_VENCER_SETTING) ?? "",
+      backup_path: map.get(BACKUP_PATH_SETTING),
+      backup_frequency: map.get(BACKUP_FREQUENCY_SETTING),
+      backup_retention: map.has(BACKUP_RETENTION_SETTING) ? Number.parseInt(map.get(BACKUP_RETENTION_SETTING) as string, 10) : undefined,
+      backup_cloud_enabled: map.has(BACKUP_CLOUD_ENABLED_SETTING) ? map.get(BACKUP_CLOUD_ENABLED_SETTING) === "true" : undefined,
+      backup_cloud_token: map.get(BACKUP_CLOUD_TOKEN_SETTING),
+      backup_encryption_enabled: map.has(BACKUP_ENCRYPTION_ENABLED_SETTING) ? map.get(BACKUP_ENCRYPTION_ENABLED_SETTING) === "true" : undefined,
+      backup_password: map.get(BACKUP_PASSWORD_SETTING),
+      backup_time: map.get(BACKUP_TIME_SETTING),
       stock_alert_type_settings: stockAlertTypeMap,
     };
   }
@@ -224,6 +256,14 @@ export class SettingsService {
     fiado_alert_on_due_day?: boolean;
     whatsapp_message_fiado_vencido?: string;
     whatsapp_message_fiado_a_vencer?: string;
+    backup_path?: string;
+    backup_frequency?: string;
+    backup_retention?: number;
+    backup_cloud_enabled?: boolean;
+    backup_cloud_token?: string;
+    backup_encryption_enabled?: boolean;
+    backup_password?: string;
+    backup_time?: string;
     stock_alert_type_settings?: Record<string, number>;
   }) {
     const operations: Promise<unknown>[] = [];
@@ -367,6 +407,38 @@ export class SettingsService {
           data.whatsapp_message_fiado_a_vencer,
         ),
       );
+    }
+
+    if (data.backup_path !== undefined) {
+      operations.push(this.settingsRepository.upsert(BACKUP_PATH_SETTING, data.backup_path));
+    }
+
+    if (data.backup_frequency !== undefined) {
+      operations.push(this.settingsRepository.upsert(BACKUP_FREQUENCY_SETTING, data.backup_frequency));
+    }
+
+    if (data.backup_retention !== undefined) {
+      operations.push(this.settingsRepository.upsert(BACKUP_RETENTION_SETTING, toNumericSettingValue(data.backup_retention)));
+    }
+
+    if (data.backup_cloud_enabled !== undefined) {
+      operations.push(this.settingsRepository.upsert(BACKUP_CLOUD_ENABLED_SETTING, toBooleanSettingValue(data.backup_cloud_enabled)));
+    }
+
+    if (data.backup_cloud_token !== undefined) {
+      operations.push(this.settingsRepository.upsert(BACKUP_CLOUD_TOKEN_SETTING, data.backup_cloud_token));
+    }
+
+    if (data.backup_encryption_enabled !== undefined) {
+      operations.push(this.settingsRepository.upsert(BACKUP_ENCRYPTION_ENABLED_SETTING, toBooleanSettingValue(data.backup_encryption_enabled)));
+    }
+
+    if (data.backup_password !== undefined) {
+      operations.push(this.settingsRepository.upsert(BACKUP_PASSWORD_SETTING, data.backup_password));
+    }
+
+    if (data.backup_time !== undefined) {
+      operations.push(this.settingsRepository.upsert(BACKUP_TIME_SETTING, data.backup_time));
     }
 
     if (data.stock_alert_type_settings) {

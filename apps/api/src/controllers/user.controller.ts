@@ -59,7 +59,8 @@ export class UserController {
     next: NextFunction,
   ): Promise<void> {
     try {
-      await userService.deactivate(req.params.id as string);
+      const changedById = req.user?.sub as string;
+      await userService.deactivate(req.params.id as string, changedById);
       res.json({ success: true, message: "Usuário desativado" });
     } catch (error) {
       next(error);

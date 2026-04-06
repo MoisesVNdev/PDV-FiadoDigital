@@ -5,6 +5,7 @@ import {
 } from "../repositories/customer.repository.js";
 import type { CreateCustomerPayload, CustomerQueryParams } from "@pdv/shared";
 import { AuthService } from "./auth.service.js";
+import { notFound, forbidden, badRequest } from "../errors/domain-error.js";
 
 const customerRepository = new CustomerRepository();
 const authService = new AuthService();
@@ -18,7 +19,7 @@ export class CustomerService {
     const customer = await customerRepository.findById(id);
 
     if (!customer) {
-      throw new Error("Cliente não encontrado");
+      throw notFound("Cliente não encontrado");
     }
 
     return customer;
@@ -28,7 +29,7 @@ export class CustomerService {
     const customer = await customerRepository.findById(customerId);
 
     if (!customer) {
-      throw new Error("Cliente não encontrado");
+      throw notFound("Cliente não encontrado");
     }
 
     return customerRepository.findFiadoHistoryByCustomerId(customerId, page, perPage, filter);
@@ -38,7 +39,7 @@ export class CustomerService {
     const customer = await customerRepository.findById(customerId);
 
     if (!customer) {
-      throw new Error("Cliente não encontrado");
+      throw notFound("Cliente não encontrado");
     }
 
     return customerRepository.findPaymentHistoryByCustomerId(customerId, page, perPage, filter);
@@ -93,17 +94,17 @@ export class CustomerService {
     const managerId = await authService.validateManagerPin(pin);
 
     if (!managerId) {
-      throw new Error("PIN inválido ou não configurado.");
+      throw forbidden("PIN inválido ou não configurado.");
     }
 
     const customer = await customerRepository.findById(customerId);
 
     if (!customer) {
-      throw new Error("Cliente não encontrado");
+      throw notFound("Cliente não encontrado");
     }
 
     if (amountCents <= 0 || amountCents > customer.current_debt_cents) {
-      throw new Error(
+      throw badRequest(
         "Valor do pagamento inválido. Deve ser maior que zero e menor ou igual à dívida atual."
       );
     }
@@ -115,11 +116,11 @@ export class CustomerService {
       });
 
       if (!customerInTransaction) {
-        throw new Error("Cliente não encontrado");
+        throw notFound("Cliente não encontrado");
       }
 
       if (amountCents <= 0 || amountCents > customerInTransaction.current_debt_cents) {
-        throw new Error(
+        throw badRequest(
           "Valor do pagamento inválido. Deve ser maior que zero e menor ou igual à dívida atual."
         );
       }
@@ -146,7 +147,7 @@ export class CustomerService {
           });
 
       if (!fallbackOpenCashRegister) {
-        throw new Error("Não há caixa aberto no sistema para registrar o pagamento de fiado.");
+        throw badRequest("Não há caixa aberto no sistema para registrar o pagamento de fiado.");
       }
 
       const updated = await tx.customer.update({
