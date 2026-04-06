@@ -1,3 +1,5 @@
+import { logInfo } from "../utils/logger.js";
+
 type PrintReceiptRequest = {
   sale_id?: string;
   terminal_id?: string;
@@ -14,7 +16,7 @@ export class PrintService {
   enqueueReceiptPrint(request: PrintReceiptRequest): { queued: boolean; queue_size: number } {
     printQueue.push(request);
 
-    console.log("[PrintService] Solicitacao de impressao enfileirada:", request);
+    logInfo("Solicitacao de impressao enfileirada", { tag: "PrintService", request });
 
     return {
       queued: true,

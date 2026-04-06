@@ -101,7 +101,12 @@ export class CashRegisterController {
 
   async close(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const register = await cashRegisterService.close(req.body);
+      const payload = {
+        id: req.body.id as string,
+        closing_balance_cents: Number(req.body.closing_balance_cents),
+        operator_id: req.user?.sub as string,
+      };
+      const register = await cashRegisterService.close(payload);
       res.json({ success: true, data: register });
     } catch (error) {
       next(error);

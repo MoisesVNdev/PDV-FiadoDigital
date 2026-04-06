@@ -3,6 +3,7 @@ import { StockMovementRepository } from "../repositories/stock-movement.reposito
 import { SettingsRepository } from "../repositories/settings.repository.js";
 import { NotificationService } from "./notification.service.js";
 import { NOTIFICATION_TYPES, NOTIFICATION_SEVERITIES } from "@pdv/shared";
+import { logError } from "../utils/logger.js";
 
 const stockMovementRepository = new StockMovementRepository();
 const productRepository = new ProductRepository();
@@ -66,7 +67,7 @@ export class StockMovementService {
         meta: JSON.stringify({ productId: updatedProduct.id, redirectPath: "/products" }),
         target_roles: ["admin", "manager"],
       }).catch((err: unknown) =>
-        console.error("[Notification] Erro ao criar notificação de estoque:", err),
+        logError("Erro ao criar notificação de estoque", err, { tag: "Notification" }),
       );
     }
 
@@ -113,7 +114,7 @@ export class StockMovementService {
         message: `O estoque acumulado do tipo "${row.name}" está em ${stockDisplay} ${unit}, abaixo do limite configurado (${threshold.toLocaleString("pt-BR")} ${unit}).`,
         meta: JSON.stringify({ productTypeId: row.id, redirectPath: "/products" }),
         target_roles: ["admin", "manager"],
-      }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação por tipo:", err));
+      }).catch((err: unknown) => logError("Erro ao criar notificação por tipo", err, { tag: "Notification" }));
     }
   }
 }

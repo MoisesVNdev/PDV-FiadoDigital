@@ -17,6 +17,7 @@ import {
   notFound,
   unprocessable,
 } from "../errors/domain-error.js";
+import { logError } from "../utils/logger.js";
 
 const saleRepository = new SaleRepository();
 const customerRepository = new CustomerRepository();
@@ -160,7 +161,7 @@ export class SaleService {
           message: `O produto "${product.productName}" atingiu o estoque mínimo (${product.min_stock_alert} un).`,
           meta: JSON.stringify({ productId: product.productId, redirectPath: "/products" }),
           target_roles: ["admin", "manager"],
-        }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação de estoque:", err));
+        }).catch((err: unknown) => logError("Erro ao criar notificação de estoque", err, { tag: "Notification" }));
       }
     }
 
@@ -182,7 +183,7 @@ export class SaleService {
             message: `O cliente "${updatedCustomer.name}" atingiu 100% do limite de crédito (${formatCents(updatedCustomer.credit_limit_cents)}).`,
             meta: JSON.stringify({ customerId: updatedCustomer.id, redirectPath: "/customers" }),
             target_roles: ["admin", "manager"],
-          }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação de fiado:", err));
+          }).catch((err: unknown) => logError("Erro ao criar notificação de fiado", err, { tag: "Notification" }));
         } else if (shouldNotifyFiadoAtNinety && usagePercent >= 90) {
           notificationService.create({
             type: NOTIFICATION_TYPES.FIADO_LIMIT_APPROACHING,
@@ -191,7 +192,7 @@ export class SaleService {
             message: `O cliente "${updatedCustomer.name}" atingiu ${usagePercent.toFixed(0)}% do limite de crédito (${formatCents(updatedCustomer.current_debt_cents)} de ${formatCents(updatedCustomer.credit_limit_cents)}).`,
             meta: JSON.stringify({ customerId: updatedCustomer.id, redirectPath: "/customers" }),
             target_roles: ["admin", "manager"],
-          }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação de fiado:", err));
+          }).catch((err: unknown) => logError("Erro ao criar notificação de fiado", err, { tag: "Notification" }));
         }
       }
     }
@@ -293,7 +294,7 @@ export class SaleService {
         message: `Estorno de ${formatCents(sale.total_cents)} registrado na venda #${id.substring(0, 8)}. Operador: ${operatorId}.`,
         meta: JSON.stringify({ saleId: id, redirectPath: "/sales" }),
         target_roles: ["admin", "manager"],
-      }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação de estorno:", err));
+      }).catch((err: unknown) => logError("Erro ao criar notificação de estorno", err, { tag: "Notification" }));
     }
   }
 
@@ -392,7 +393,7 @@ export class SaleService {
           message: `O total de descontos de troco no período ${current.label} está em ${formatCents(total)} de ${formatCents(current.limit)}.`,
           meta: JSON.stringify({ redirectPath: "/control" }),
           target_roles: ["admin", "manager"],
-        }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação de desconto:", err));
+        }).catch((err: unknown) => logError("Erro ao criar notificação de desconto", err, { tag: "Notification" }));
         continue;
       }
 
@@ -403,7 +404,7 @@ export class SaleService {
         message: `O total de descontos de troco no período ${current.label} atingiu ${formatCents(total)}, acima do limite de ${formatCents(current.limit)}.`,
         meta: JSON.stringify({ redirectPath: "/control" }),
         target_roles: ["admin", "manager"],
-      }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação de desconto:", err));
+      }).catch((err: unknown) => logError("Erro ao criar notificação de desconto", err, { tag: "Notification" }));
     }
   }
 
@@ -432,6 +433,6 @@ export class SaleService {
       message: `O caixa em dinheiro do terminal atingiu ${formatCents(balance.totalCashCents)}, acima do valor de alerta configurado (${formatCents(threshold)}).`,
       meta: JSON.stringify({ terminalId, redirectPath: "/control" }),
       target_roles: ["admin", "manager"],
-    }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação de caixa:", err));
+    }).catch((err: unknown) => logError("Erro ao criar notificação de caixa", err, { tag: "Notification" }));
   }
 }

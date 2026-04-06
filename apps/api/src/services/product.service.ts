@@ -8,6 +8,8 @@ const productRepository = new ProductRepository();
 const productTypeRepository = new ProductTypeRepository();
 const brandRepository = new BrandRepository();
 const stockMovementRepository = new StockMovementRepository();
+import { AuditLogRepository } from "../repositories/audit-log.repository.js";
+const auditLogRepository = new AuditLogRepository();
 
 type BulkPricePayload = {
   product_type_id: string;
@@ -160,6 +162,16 @@ export class ProductService {
       price_cents: resolvedPriceCents,
       average_cost_cents: nextAverageCostCents,
     });
+
+    if (resolvedPriceCents !== currentProduct.price_cents && operatorId) {
+      await auditLogRepository.create({
+        action: "product_price_updated",
+        actor_id: operatorId,
+        entity_type: "product",
+        entity_id: id,
+        details: { old_price_cents: currentProduct.price_cents, new_price_cents: resolvedPriceCents, product_id: id },
+      });
+    }
 
     if (entryQuantity > 0 && operatorId) {
       await stockMovementRepository.create({

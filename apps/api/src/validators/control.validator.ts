@@ -10,6 +10,20 @@ const createStockAdjustmentSchema = z.object({
   description: z.string().trim().min(3, "Descrição é obrigatória"),
 });
 
+export const stockSummaryQuerySchema = z.object({
+  product_type_id: z.string().trim().min(1).optional(),
+  brand_id: z.string().trim().min(1).optional(),
+  page: z.coerce.number().int().positive().default(1),
+  per_page: z.coerce.number().int().positive().default(20),
+  sort_by: z.enum(["name", "type", "brand", "stock", "average_cost", "stock_value"]).optional(),
+  sort_order: z.enum(["asc", "desc"]).optional(),
+});
+
+export const dateRangeQuerySchema = z.object({
+  start_date: z.string().trim().min(1).optional(),
+  end_date: z.string().trim().min(1).optional(),
+});
+
 export function validateCreateStockAdjustment(
   req: Request,
   res: Response,

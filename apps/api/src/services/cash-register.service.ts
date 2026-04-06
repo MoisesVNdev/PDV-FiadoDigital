@@ -5,9 +5,13 @@ import { formatCents, NOTIFICATION_SEVERITIES, NOTIFICATION_TYPES } from "@pdv/s
 import type { CashRegisterQueryParams } from "../repositories/cash-register.repository.js";
 import { badRequest, conflict } from "../errors/domain-error.js";
 
+import { AuditLogRepository } from "../repositories/audit-log.repository.js";
+import { logError } from "../utils/logger.js";
+
 const cashRegisterRepository = new CashRegisterRepository();
 const settingsRepository = new SettingsRepository();
 const notificationService = new NotificationService();
+const auditLogRepository = new AuditLogRepository();
 const CASH_REGISTER_ALERT_AMOUNT_SETTING = "cash_register_alert_amount_cents";
 
 export class CashRegisterService {
@@ -40,11 +44,35 @@ export class CashRegisterService {
       throw conflict("Já existe um caixa aberto neste terminal");
     }
 
-    return cashRegisterRepository.create(payload);
+    const result = await cashRegisterRepository.create(payload);
+
+    await auditLogRepository.create({
+      action: "cash_register_opened",
+      actor_id: payload.operator_id,
+      entity_type: "cash_register",
+      entity_id: result.id,
+      details: { terminal_id: payload.terminal_id, opening_balance_cents: payload.opening_balance_cents },
+    });
+
+    return result;
   }
 
-  async close(payload: { id: string; closing_balance_cents: number }) {
-    return cashRegisterRepository.close(payload.id, payload.closing_balance_cents);
+  async close(payload: { id: string; closing_balance_cents: number; operator_id: string }) {
+    const result = await cashRegisterRepository.close(payload.id, payload.closing_balance_cents);
+
+    await auditLogRepository.create({
+      action: "cash_register_closed",
+      actor_id: payload.operator_id,
+      entity_type: "cash_register",
+      entity_id: result.id,
+      details: {
+        closing_balance_cents: payload.closing_balance_cents,
+        expected_balance_cents: result.expected_balance_cents,
+        difference_cents: result.difference_cents,
+      },
+    });
+
+    return result;
   }
 
   async cashOut(payload: {
@@ -61,12 +89,22 @@ export class CashRegisterService {
       throw badRequest("Operador inválido");
     }
 
-    return cashRegisterRepository.cashOut(
+    const result = await cashRegisterRepository.cashOut(
       payload.cash_register_id,
       payload.amount_cents,
       payload.description,
       payload.operator_id,
     );
+
+    await auditLogRepository.create({
+      action: "cash_withdrawal",
+      actor_id: payload.operator_id,
+      entity_type: "cash_register",
+      entity_id: payload.cash_register_id,
+      details: { amount_cents: payload.amount_cents, description: payload.description, transaction_id: result.id },
+    });
+
+    return result;
   }
 
   async cashIn(payload: {
@@ -89,6 +127,14 @@ export class CashRegisterService {
       payload.description,
       payload.operator_id,
     );
+
+    await auditLogRepository.create({
+      action: "cash_supply",
+      actor_id: payload.operator_id,
+      entity_type: "cash_register",
+      entity_id: payload.cash_register_id,
+      details: { amount_cents: payload.amount_cents, description: payload.description },
+    });
 
     await this.notifyCashRegisterAmountReached(updatedRegister.terminal_id);
 
@@ -120,6 +166,6 @@ export class CashRegisterService {
       message: `O caixa em dinheiro do terminal atingiu ${formatCents(balance.totalCashCents)}, acima do valor de alerta configurado (${formatCents(threshold)}).`,
       meta: JSON.stringify({ terminalId, redirectPath: "/control" }),
       target_roles: ["admin", "manager"],
-    }).catch((err: unknown) => console.error("[Notification] Erro ao criar notificação de caixa:", err));
+    }).catch((err: unknown) => logError("Erro ao criar notificação de caixa", err, { tag: "Notification" }));
   }
 }
