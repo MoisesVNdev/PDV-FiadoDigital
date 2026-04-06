@@ -52,6 +52,7 @@ temp/
 .cache/
 
 # Projeto — arquivos ignorados
+apps/api/coverage/
 apps/web/test-results/*
 .github/*
 
