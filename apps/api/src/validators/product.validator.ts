@@ -3,6 +3,13 @@ import type { Request, Response, NextFunction } from "express";
 
 const weightUnitSchema = z.enum(["kg", "g", "L", "ml", "un"]);
 
+export const listProductsQuerySchema = z.object({
+  barcode: z.string().trim().optional(),
+  search: z.string().trim().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  per_page: z.coerce.number().int().positive().default(20),
+});
+
 const productBaseSchema = z.object({
   name: z.string().min(2).max(100),
   brand_id: z.string().uuid().optional(),
