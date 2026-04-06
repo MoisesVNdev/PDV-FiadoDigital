@@ -17,6 +17,7 @@
     "test:unit": "pnpm -r run test:unit",
     "test:e2e": "pnpm -r run test:e2e",
     "db:migrate": "pnpm --filter @pdv/api run db:migrate",
+    "db:migrate:deploy": "pnpm --filter @pdv/api run db:migrate:deploy",
     "db:seed": "pnpm --filter @pdv/api run db:seed",
     "db:studio": "pnpm --filter @pdv/api run db:studio",
     "clean": "pnpm -r run clean && rimraf node_modules"
@@ -30,5 +31,8 @@
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0"
   },
-  "packageManager": "pnpm@9.15.0"
+  "packageManager": "pnpm@9.15.0",
+  "dependencies": {
+    "@prisma/config": "^7.6.0"
+  }
 }
