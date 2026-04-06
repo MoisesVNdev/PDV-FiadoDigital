@@ -135,11 +135,8 @@ const cashChangeCents = computed(() => {
   return calcChange(cashReceivedCents.value, cashAmountRequiredCents.value, 0);
 });
 
-const customerCanUseFiado = computed(() => {
-  if (!props.customer) return false;
-  if (!props.customer.is_active) return false;
-  if (props.customer.credit_blocked) return false;
-  return validateFiadoCredit(props.customer.credit_limit_cents, props.customer.current_debt_cents, 1).valid;
+const hasFiadoWithoutCustomer = computed(() => {
+  return hasFiadoSelectedInPayment.value && !props.customer;
 });
 
 const customerListResults = computed(() => {
@@ -429,10 +426,7 @@ function removePaymentRow(index: number): void {
   updateRows(newRows);
 }
 
-function isFiadoOptionDisabled(method: PaymentMethod): boolean {
-  if (method !== PAYMENT_METHODS.FIADO) return false;
-  return !customerCanUseFiado.value;
-}
+
 
 async function confirmPayment(): Promise<void> {
   paymentError.value = null;
@@ -457,13 +451,13 @@ async function confirmPayment(): Promise<void> {
       }
     }
 
-    if (hasFiadoSelectedInPayment.value && hasInactiveSelectedCustomer.value) {
-      paymentError.value = INACTIVE_FIADO_MODAL_MESSAGE;
+    if (hasFiadoSelectedInPayment.value && !props.customer) {
+      paymentError.value = "Selecione um cliente para pagamento em fiado.";
       return;
     }
 
-    if (hasFiadoSelectedInPayment.value && !customerCanUseFiado.value) {
-      paymentError.value = "Cliente não elegível para fiado.";
+    if (hasFiadoSelectedInPayment.value && hasInactiveSelectedCustomer.value) {
+      paymentError.value = INACTIVE_FIADO_MODAL_MESSAGE;
       return;
     }
 
@@ -743,7 +737,7 @@ function handleOverlayClick() {
                 v-for="method in paymentMethods"
                 :key="method.value"
                 :value="method.value"
-                :disabled="isFiadoOptionDisabled(method.value) || (usedPaymentMethods.includes(method.value) && row.method !== method.value)"
+                :disabled="usedPaymentMethods.includes(method.value) && row.method !== method.value"
               >
                 {{ method.label }}
               </option>
@@ -929,7 +923,7 @@ function handleOverlayClick() {
             <button
               type="button"
               class="min-h-11 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
-              :disabled="paymentLoading || !!fiadoInactiveCustomerError || hasFiadoInsufficientCredit"
+              :disabled="paymentLoading || hasFiadoWithoutCustomer || !!fiadoInactiveCustomerError || hasFiadoInsufficientCredit"
               @click="confirmPayment"
             >
               {{ paymentLoading ? "Confirmando..." : "Confirmar" }}

@@ -29,6 +29,7 @@ export function useSaleDomain() {
   ): Promise<PrintFallbackResult> {
     void payload;
 
+    // B-01 resolvido: fallback oficial
     onFallbackVisible?.(PRINT_FALLBACK_MESSAGE);
     window.print();
 

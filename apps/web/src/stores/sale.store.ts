@@ -1,6 +1,10 @@
 import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
 import type { CreateSalePayload, SalePayment } from "@pdv/shared";
+import { generateUUID } from "@/utils/generate-uuid.js";
+import { useOfflineQueue } from "@/composables/use-offline-queue.js";
+import { useWebSocket } from "@/composables/use-websocket.js";
+import { useApi } from "@/composables/use-api.js";
 
 type CartItem = {
   product_id: string;
@@ -126,7 +130,7 @@ export const useSaleStore = defineStore("sale", () => {
     finalTotalCents?: number,
   ): CreateSalePayload {
     return {
-      uuid: saleUuid.value ?? crypto.randomUUID(),
+      uuid: saleUuid.value ?? generateUUID(),
       terminal_id: terminalId,
       operator_id: operatorId,
       payment_method: paymentMethod as CreateSalePayload["payment_method"],
@@ -157,12 +161,31 @@ export const useSaleStore = defineStore("sale", () => {
 
   watch([items, discountCentsState, saleUuid], persistState, { deep: true });
 
+  const { enqueue, queueLength, isSyncing } = useOfflineQueue();
+  const { isOnline } = useWebSocket();
+  const { authenticatedFetch } = useApi();
+
+  async function createSale(payload: CreateSalePayload) {
+    if (!isOnline.value) {
+      enqueue(payload);
+      return { ok: true, status: 202, offline: true, payload };
+    }
+
+    return authenticatedFetch("/api/sales", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
   return {
     items,
     discountCents,
     saleUuid,
     subtotalCents,
     totalCents,
+    queueLength,
+    isSyncing,
     addItem,
     removeItem,
     updateItemQuantity,
@@ -170,5 +193,6 @@ export const useSaleStore = defineStore("sale", () => {
     applyChangeDiscount,
     removeChangeDiscount,
     buildPayload,
+    createSale,
   };
 });

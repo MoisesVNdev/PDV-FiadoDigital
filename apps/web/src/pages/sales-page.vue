@@ -12,6 +12,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch, reactive, toRef
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { NotFoundException } from "@zxing/library";
 import QRCode from "qrcode";
+import { generateUUID } from "@/utils/generate-uuid.js";
 import { RecycleScroller } from "vue-virtual-scroller";
 import AppHeader from "@/components/layout/app-header.vue";
 import AppSidebar from "@/components/layout/app-sidebar.vue";
@@ -325,24 +326,8 @@ const weightedOverStockMessage = computed(() => {
   return `Peso informado supera o estoque disponível (${weightedStockAvailableDisplay.value}).`;
 });
 
-const customerCanUseFiado = computed(() => {
-  if (!customerState.selected) {
-    return false;
-  }
-
-  if (!customerState.selected.is_active) {
-    return false;
-  }
-
-  if (customerState.selected.credit_blocked) {
-    return false;
-  }
-
-  return validateFiadoCredit(
-    customerState.selected.credit_limit_cents,
-    customerState.selected.current_debt_cents,
-    1,
-  ).valid;
+const hasFiadoWithoutCustomer = computed(() => {
+  return hasFiadoSelectedInPayment.value && !customerState.selected;
 });
 
 const customerListResults = computed(() => {
@@ -1513,6 +1498,11 @@ async function searchProductsServer(query: string): Promise<void> {
 }
 
 function selectProductFromSearch(product: Product): void {
+  console.log("selectProductFromSearch fired with product:", product);
+  if (!product) {
+    console.error("Product is undefined!");
+    return;
+  }
   if (product.is_bulk) {
     weightedProduct.value = product;
     rawWeight.value = 0;
@@ -1706,13 +1696,7 @@ function removePaymentRow(index: number): void {
   paymentRows.value.splice(index, 1);
 }
 
-function isFiadoOptionDisabled(method: PaymentMethod): boolean {
-  if (method !== PAYMENT_METHODS.FIADO) {
-    return false;
-  }
 
-  return !customerCanUseFiado.value;
-}
 
 async function confirmPayment(): Promise<void> {
   paymentError.value = null;
@@ -1744,13 +1728,13 @@ async function confirmPayment(): Promise<void> {
 
     const hasFiado = paymentRows.value.some((row) => row.method === PAYMENT_METHODS.FIADO);
 
-    if (hasFiado && hasInactiveSelectedCustomer.value) {
-      paymentError.value = INACTIVE_FIADO_MODAL_MESSAGE;
+    if (hasFiado && !customerState.selected) {
+      paymentError.value = "Selecione um cliente para pagamento em fiado.";
       return;
     }
 
-    if (hasFiado && !customerCanUseFiado.value) {
-      paymentError.value = "Cliente não elegível para fiado.";
+    if (hasFiado && hasInactiveSelectedCustomer.value) {
+      paymentError.value = INACTIVE_FIADO_MODAL_MESSAGE;
       return;
     }
 
@@ -1837,7 +1821,7 @@ async function generatePixQRCode(): Promise<void> {
       return;
     }
 
-    const saleUuid = saleStore.saleUuid || crypto.randomUUID();
+    const saleUuid = saleStore.saleUuid || generateUUID();
     saleStore.saleUuid = saleUuid;
     const pixCents = pixPaymentCents.value;
 
@@ -2846,7 +2830,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               <button
                 type="button"
                 class="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left hover:bg-slate-50"
-                @click="selectProductFromSearch(toSearchProduct(product))"
+                @mousedown.prevent="selectProductFromSearch(toSearchProduct(product))"
               >
                 <span>
                   <span class="block text-sm font-medium text-slate-900">{{ toSearchProduct(product).name }}</span>
@@ -3081,7 +3065,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
                   v-for="method in paymentMethods"
                   :key="method.value"
                   :value="method.value"
-                  :disabled="isFiadoOptionDisabled(method.value) || (usedPaymentMethods.includes(method.value) && row.method !== method.value)"
+                  :disabled="usedPaymentMethods.includes(method.value) && row.method !== method.value"
                 >
                   {{ method.label }}
                 </option>
@@ -3267,7 +3251,7 @@ function captureScannerInput(event: KeyboardEvent): boolean {
               <button
                 type="button"
                 class="min-h-11 rounded-md bg-blue-700 px-4 font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
-                :disabled="paymentLoading || !!fiadoInactiveCustomerError || hasFiadoInsufficientCredit"
+                :disabled="paymentLoading || hasFiadoWithoutCustomer || !!fiadoInactiveCustomerError || hasFiadoInsufficientCredit"
                 @click="confirmPayment"
               >
                 {{ paymentLoading ? "Confirmando..." : "Confirmar" }}
