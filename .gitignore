@@ -54,8 +54,13 @@ temp/
 # Projeto — arquivos ignorados
 apps/api/coverage/
 apps/web/test-results/*
-.github/*
+# Instruções do Copilot ficam fora do repositório, mas .github/workflows (CI) deve ser versionado
+.github/copilot-instructions.md
+.github/instructions/
 
 # Chaves Privadas
 *.pem
 *.key
+
+# Arquivos temporários gerados pelo Vite/Vitest
+*.timestamp-*.mjs
