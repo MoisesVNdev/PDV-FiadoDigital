@@ -1,263 +1,157 @@
-# FiadoDigital PDV
+# 🏪 FiadoDigital PDV
 
 ![Versão](https://img.shields.io/badge/vers%C3%A3o-v4.1.0-blue.svg)
-![Node.js](https://img.shields.io/badge/Node.js-20.x-green.svg)
-![Vue 3](https://img.shields.io/badge/Vue-3-4fc08d.svg)
+![Node.js](https://img.shields.io/badge/Node.js-20-green.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6.svg)
 ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57.svg)
-![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF.svg)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue.svg)
+<!-- Depois de fazer commit do .github/workflows/ci.yml, adicione o badge real:
+[![CI](https://github.com/MoisesVNdev/PDV-FiadoDigital/actions/workflows/ci.yml/badge.svg)](https://github.com/MoisesVNdev/PDV-FiadoDigital/actions) -->
 
-## Descrição do Projeto (O Problema e a Solução)
 
-Muitos pequenos comerciantes (mercearias, mercadinhos e padarias) operam com a concessão de crédito informal aos seus clientes frequentes — o famoso "fiado" no "caderninho". Essa prática, embora fundamental para a fidelização local, frequentemente ocorre sem garantias formais, resultando em desorganização nos recebimentos, atritos no momento da cobrança, alto risco financeiro e inadimplência.
+**Ponto de venda offline-first que substitui o "caderninho do fiado" de mercearias, padarias e mercadinhos.**
 
-A solução é o **FiadoDigital PDV**, um sistema híbrido de Ponto de Venda projetado especificamente para o pequeno varejo de bairro, de forma local e offline-first. Ele substitui o caderninho por uma gestão inteligente com digitalização do fiado, incluindo mecanismos de gestão de risco como bloqueio automático de inadimplentes, além de facilitar a comunicação via WhatsApp para cobranças e envio de recibos digitais. A plataforma estabiliza o fluxo de caixa enquanto mantém a relação de confiança do lojista com seus clientes.
+<!-- VERIFICAR: se o sistema estiver em uso, coloque aqui. É o argumento mais forte do projeto:
+> 🟢 Em uso em [tipo/nome do comércio] desde [mês/ano], com [N] clientes e [N] vendas registradas. -->
 
----
+## O problema
+No comércio de bairro, vender "fiado" fideliza o cliente, mas o controle em papel gera esquecimento, briga na hora de cobrar e inadimplência sem limite.
 
-## Screenshots / Demo
+## A solução
+- **Crédito com regra:** limite por cliente, alerta ao atingir 90% e **bloqueio automático** de inadimplentes
+- **Cobrança sem constrangimento:** mensagem pronta pelo WhatsApp e recibo em PDF
+- **Funciona sem internet:** as vendas entram numa fila local e são reenviadas automaticamente quando a conexão volta, **sem duplicar**
+
+| Vendas | Dashboard | Smartphone |
+|---|---|---|
+| ![Tela de vendas](docs/Imagens/Tela-DesktopFHD/Tela-Vendas-DesktopFHD.png) | ![Dashboard](docs/Imagens/Tela-DesktopFHD/Tela-Dashboard-DesktopFHD.png) | ![Smartphone](docs/Imagens/Tela-Smartphone/Tela-Vendas%20-%20Smartphone.png) |
+
+<details><summary>Mais telas (clientes, caixa, 1024×768)</summary>
 
 | Desktop (1920×1080) | Desktop (1024×768) | Smartphone |
 | --- | --- | --- |
-| ![Tela de vendas — resolução 1920×1080](docs/Imagens/Tela-DesktopFHD/Tela-Vendas-DesktopFHD.png) | ![Tela de vendas — resolução 1024×768](docs/Imagens/Tela-1024x768/Tela-Vendas-Desktop1024x768.png) | ![Tela de vendas — smartphone](docs/Imagens/Tela-Smartphone/Tela-Vendas%20-%20Smartphone.png) |
-| ![Dashboard — resolução 1920×1080](docs/Imagens/Tela-DesktopFHD/Tela-Dashboard-DesktopFHD.png) | ![Dashboard — resolução 1024×768](docs/Imagens/Tela-1024x768/Tela-Dasboard-Desktop1024x768.png) | ![Dashboard — smartphone](docs/Imagens/Tela-Smartphone/Tela-Dashboard-Smartphone-01.png) |
-| ![Gestão de Clientes — resolução 1920×1080](docs/Imagens/Tela-DesktopFHD/Tela-Clientes-DesktopFHD-AbaClientes.png) | ![Gestão de Clientes — resolução 1024×768](docs/Imagens/Tela-1024x768/Tela-Clientes-Desktop1024x768-AbaClientes.png) | ![Gestão de Clientes — smartphone](docs/Imagens/Tela-Smartphone/Tela-Clientes-Smartphone-AbaClientes.png) |
-| ![Controle de Caixa — resolução 1920×1080](docs/Imagens/Tela-DesktopFHD/Tela-Controle-DesktopFHD-Caixa.png) | ![Controle de Caixa — resolução 1024×768](docs/Imagens/Tela-1024x768/Tela-Controle-Desktop1024x768-AbaCaixa.png) | ![Controle de Caixa — smartphone](docs/Imagens/Tela-Smartphone/Tela-Controle-Smartphone-AbaCaixa.png) |
+| ![Clientes](docs/Imagens/Tela-DesktopFHD/Tela-Clientes-DesktopFHD-AbaClientes.png) | ![Clientes](docs/Imagens/Tela-1024x768/Tela-Clientes-Desktop1024x768-AbaClientes.png) | ![Clientes](docs/Imagens/Tela-Smartphone/Tela-Clientes-Smartphone-AbaClientes.png) |
+| ![Caixa](docs/Imagens/Tela-DesktopFHD/Tela-Controle-DesktopFHD-Caixa.png) | ![Caixa](docs/Imagens/Tela-1024x768/Tela-Controle-Desktop1024x768-AbaCaixa.png) | ![Caixa](docs/Imagens/Tela-Smartphone/Tela-Controle-Smartphone-AbaCaixa.png) |
+</details>
 
 ---
 
-## Funcionalidades Principais
-
-- 🔐 **Autenticação Obrigatória:** Todas as páginas exigem login com usuário e senha. Nenhuma rota é pública.
-- 👥 **Gestão de Clientes ("Caderninho Digital"):** cadastro completo, limite de crédito individual, status inteligente (bloqueio automático de inadimplentes), cobrança via WhatsApp, quitação protegida por PIN de segurança.
-- 🛒 **Frente de Caixa:** multimeios de pagamento (até dois meios por venda: dinheiro, PIX, cartão, fiado), cálculo automático de taxas de maquineta, arredondamento de troco configurável.
-- 📱 **Acesso Smartphone:** espelhamento via QR Code, gestão de estoque da prateleira, cobrança móvel.
-- 📊 **Dashboard e Relatórios:** gráficos de rosca por modalidade de pagamento, alertas de ruptura de estoque, histórico com recibos em PDF, acompanhamento de pagamentos parciais.
-- 🔔 **Alertas Inteligentes:** estoque mínimo, sangria de caixa, alerta de fiado ao atingir 90% do limite.
-- 💾 **Backup:** manual ou agendado, com criptografia opcional e restauração parcial por módulo.
-- 🌐 **Modo Offline:** fila transacional com replay automático e idempotência via `use-offline-queue.ts`.
+## Funcionalidades
+- **Frente de caixa:** até 2 formas de pagamento por venda (dinheiro, PIX, cartão, fiado), taxa da maquininha calculada automaticamente e arredondamento de troco configurável
+- **Caderninho digital:** cadastro de clientes, limite de crédito, pagamentos parciais e quitação protegida por PIN
+- **Celular como apoio:** espelhamento via QR Code, gestão do estoque da prateleira e cobrança pelo celular
+- **Dashboard:** vendas por forma de pagamento, alertas de estoque mínimo e de sangria, histórico com recibos em PDF
+- **Backup** manual ou agendado, com criptografia AES-256-GCM opcional e restauração por módulo
 
 ---
 
 ## Arquitetura
 
-### 5.1 Visão Geral
-
-O projeto é construído em um monorepo (`pnpm workspaces`) que abriga três pacotes distintos:
+Monorepo com `pnpm workspaces`:
 
 | Pacote | Tecnologia | Responsabilidade |
 |---|---|---|
-| `@pdv/web` | Vue 3 + Vite + Tailwind CSS v4 | SPA/PWA — interface do operador |
-| `@pdv/api` | Node.js 20 + Express 4 + Prisma | HTTP REST + WebSocket — lógica de negócio |
-| `@pdv/shared` | TypeScript | Tipos e contratos compartilhados |
-
-### 5.2 Diagrama de Componentes (ASCII)
+| `apps/api` | Node.js 20, Express 4, Prisma, Zod, ws | API REST, WebSocket e regras de negócio |
+| `apps/web` | Vue 3, Vite, Pinia, Tailwind v4 | PWA do operador |
+| `packages/shared` | TypeScript | Tipos e contratos compartilhados entre API e front |
 
 ```text
-┌──────────────────────────────────────────────────────┐
-│                  PDV FiadoDigital                    │
-│                                                      │
-│   ┌────────────┐   HTTP/REST    ┌──────────────────┐ │
-│   │  apps/web  │ ◄────────────► │    apps/api      │ │
-│   │  (Vue/Vite)│   WebSocket    │  (Express +      │ │
-│   │            │ ◄────────────► │   Prisma +       │ │
-│   └────────────┘                │   SQLite)        │ │
-│                                 └────────┬─────────┘ │
-│                                          │           │
-│                              ┌───────────▼─────────┐ │
-│                              │   data/dev.db       │ │
-│                              │   (SQLite local)    │ │
-│                              └─────────────────────┘ │
-│                                                      │
-│   Externo: Pix webhook (provedor PSP)                │
-│   Externo: Cloud storage (backup opcional)           │
-└──────────────────────────────────────────────────────┘
+┌────────────┐  REST + WebSocket  ┌──────────────────────┐     ┌──────────────┐
+│ apps/web   │ ◄────────────────► │ apps/api             │ ──► │ SQLite (WAL) │
+│ Vue 3 PWA  │                    │ Express + Prisma     │     └──────────────┘
+│ + offline  │                   │ Zod · rate limit     │ ──► Webhook PIX (PSP)
+└────────────┘                    └──────────────────────┘ ──► Backup em nuvem (opcional)
 ```
 
-### 5.3 Decisões Arquiteturais Chave (ADRs resumidas)
-
-| Decisão Arquitetural | Descrição Base |
+### Decisões técnicas
+| Decisão | Por quê |
 |---|---|
-| **Persistência Offline-first** | Banco SQLite local operando no modo WAL (Write-Ahead Logging). |
-| **Sessão e Identidade** | Baseada em JWT com o refresh token isolado em cookie HttpOnly. |
-| **Tempo Real** | Comunicação via WebSocket nativo com fallback de segurança para polling. |
-| **Escalabilidade Visual** | O Frontend utiliza lazy loading em suas rotas. |
-| **Tolerância Offline** | Fila offline de tipo transacional que preserva mutações. |
-
----
-
-## Stack Tecnológico Completo
-
-| Camada | Ferramenta / Plataforma |
-|---|---|
-| **Frontend** | Vue 3, Vite, Tailwind CSS v4, Pinia, vue-virtual-scroller, QRCode |
-| **Backend** | Node.js 20.x LTS, Express 4.x, Zod, ws, Rate Limit (express-rate-limit) |
-| **Banco de Dados** | SQLite via Prisma ORM (`better-sqlite3`) |
-| **Infra/Tooling** | pnpm 8.x+, Docker Compose, GitHub Actions |
-
----
-
-## Pré-requisitos e Configuração do Ambiente
-
-### 7.1 Requisitos
-
-| Requisito | Versão mínima | Verificação |
-|---|---|---|
-| Node.js | 20.x LTS | `node --version` |
-| pnpm | 8.x | `pnpm --version` |
-| SO | Linux, macOS ou Windows (WSL2 recomendado) | — |
-
-### 7.2 Instalação Completa (passo a passo)
-
-```bash
-# 1. Clonar o repositório
-git clone https://github.com/MoisesVNdev/PDV-FiadoDigital.git
-cd PDV-FiadoDigital
-
-# 2. Instalar dependências
-pnpm install
-
-# 3. Configurar variáveis de ambiente
-cp apps/api/.env.example apps/api/.env
-# Edite .env e preencha JWT_SECRET, JWT_REFRESH_SECRET e DATABASE_URL
-
-# 4. Migrar banco e gerar Prisma Client
-cd apps/api
-pnpm db:migrate
-pnpm db:generate
-pnpm db:seed
-
-# 5. Iniciar em modo desenvolvimento (via Docker Compose)
-cd ../..
-docker compose up
-```
-
-### 7.3 Credenciais padrão (seed)
-
-Ao executar a migração original, as credenciais para o operador gerencial são:
-
-| Campo | Valor |
-|---|---|
-| Usuário | `admin` |
-| Senha | `admin123` |
-| PIN gerencial | `123456` |
-
-> ⚠️ Troque imediatamente em qualquer ambiente não-descartável.
-
-### 7.4 Scripts disponíveis
-
-Existem scripts atalhos no repositório nas instâncias de pacotes.
-
-**Backend (`apps/api`):**
-- `pnpm dev` — Roda o Express local integrado com `tsx`.
-- `pnpm build` — Geração limpa de bundle do backend via `tsc`.
-- `pnpm test` — Validação de testes no framework Vitest.
-- `pnpm db:migrate` — Ajusta a base de dados em ambiente de desenvolvimento (`prisma db push`).
-- `pnpm db:seed` — Geração dos dados primitivos configuráveis.
-- `pnpm db:studio` — Visualizador do banco utilizando as credenciais correntes.
-
-**Frontend (`apps/web`):**
-- `pnpm dev` — Subir a instância do Vite na porta correspondente e com proxy preconfigurado.
-- `pnpm build` — Cria a árvore estática otimizada de deploy de interface (Vue/PWA).
-- `pnpm test` — Suite frontend executando coverage no Vitest.
-- `pnpm test:e2e` — Playwright headless check das interações complexas do frontend.
+| **SQLite em modo WAL**, local | O comércio não pode parar se a internet cair. O WAL permite leituras concorrentes durante a escrita. |
+| **Fila offline com chave de idempotência** (`use-offline-queue.ts`) | Cada venda recebe um UUID gerado no próprio caixa, com índice único no banco (`Sale.uuid`). Vendas feitas sem rede ficam na fila e são reenviadas quando a conexão volta. Se a mesma venda chegar duas vezes, a API devolve a já registrada em vez de duplicar. |
+| **Transações no Prisma** (`$transaction`) | Venda no fiado, pagamento de dívida, cancelamento e estorno atualizam a dívida do cliente e os registros da venda de forma atômica: tudo acontece junto ou nada acontece. |
+| **Contratos compartilhados** (`packages/shared`) | API e front usam os mesmos tipos, então uma mudança de contrato quebra na compilação e não em produção |
+| **WebSocket com fallback para polling** | Atualiza em tempo real o caixa e o celular pareado, sem depender do WebSocket |
 
 ---
 
 ## Segurança
-
-- Autenticação e Autorização blindada com JWT em dois fluxos, delegando o armazenamento do refresh token a um cookie HttpOnly (proteção ativa e mitigação plena contra ataques XSS).
-- PIN gerencial (fortificado na encriptação de bcrypt + rate limit) parametrizado nas operações de risco de perda financeira ou violação analítica: cancelamento, estorno, quitação de fiado.
-- Senha administrativa obrigatória em rotas que expõem alterações críticas, a exemplo da injeção de parâmetros via API (ex: chave PIX das cobranças).
-- Controle de políticas unificadas em nível de Headers HTTP e CORS limitado explicitamente a origin local (LAN).
-- **Todas as rotas exigem autenticação.** A lógica interna não compreende falhas na permissão de escopos estáticos, invalidando requests em end-points que não representem o `/auth/login` e `/auth/refresh`.
-- Processo de estabilização contínua usando backup com opção flexível e adaptativa de criptografia (AES-256-GCM) para armazenar os dados serializados da bateria.
+- **Todas as rotas exigem autenticação**, exceto `/auth/login` e `/auth/refresh`
+- **Access token de 15 minutos guardado só em memória** (Pinia) e **refresh token de 7 dias em cookie HttpOnly**: nenhum token fica no `localStorage`, então um script injetado na página não consegue ler o refresh token
+- **Controle de acesso por perfil** (`admin`, `manager`, `operator`, `stockist`), aplicado por middleware em cada rota
+- **PIN gerencial** (bcrypt + rate limit) em operações com risco financeiro: cancelamento, estorno e quitação de fiado
+- **Senha de administrador** para alterar configurações sensíveis, como a chave PIX
+- **Validação de entrada com Zod**; headers de segurança e CORS restrito à origem local (LAN) <!-- VERIFICAR: se o Zod valida todas as rotas, diga "em todas as rotas" -->
 
 ---
 
-## Testes
+## Testes e CI
 
-Cobertura escalada utilizando as principais ferramentas do segmento Node.js e SPA Client.
-
-| Camada | Framework | Cobertura |
+| Camada | Ferramenta | Escopo |
 |---|---|---|
-| Unitários (frontend) | Vitest + jsdom | 100% nos composables de domínio e interface |
-| E2E (frontend) | Playwright (Chromium) | Suítes de fumaça: Venda, Cancelamento, Caixa, Fiado, Notificações |
-| Unitários (backend) | Vitest | Suíte local focada nos repositórios, serviços transacionais críticos e controladores base. Coverage habilitado nas métricas V8. |
+| Backend: unitários | Vitest | Serviços transacionais, repositórios e controllers <!-- VERIFICAR: % de cobertura --> |
+| Frontend: unitários | Vitest + jsdom | Composables de domínio (100% de linhas) <!-- VERIFICAR: linhas ou branches? --> |
+| E2E | Playwright (Chromium) | Venda, cancelamento, caixa, fiado e notificações |
 
-Scripts rápidos de bateria autônoma em teste CI:
+<!-- VERIFICAR: o workflow .github/workflows/ci.yml NÃO está no GitHub (a pasta .github estava no .gitignore). Faça commit dele antes de publicar este parágrafo; se ele não existir, apague o parágrafo. -->
+**CI (GitHub Actions):** type-check → testes unitários → build, a cada pull request para `main` (merge do tipo *squash*).
 
 ```bash
-# Frontend
+pnpm --filter @pdv/api test
 pnpm --filter @pdv/web test
 pnpm --filter @pdv/web test:e2e
-
-# Backend
-pnpm --filter @pdv/api test
 ```
 
 ---
 
-## CI/CD
+## Como executar
 
-- Existe provisionamento dinâmico via pipeline do **GitHub Actions** (`.github/workflows/ci.yml`).
-- A branch de base analítica é a primária: `main`. A estratégia de resiliência e controle na formatação consiste obrigatoriamente no modo de merge tipo: **Squash**.
-- A esteira engloba o roteiro serial rigoroso das etapas cruciais: **lint → type-check → testes unitários → build**.
-- Subida aos ambientes ou o deploy final em produção do aplicativo se traduz em wrapper interativo via **Tauri** (operando estritamente em modo kiosk). *Este empacotador de sistema de interface base constitui-se em um repositório isolado e apartado, ficando portanto fora do escopo deste monorepo.*
+Requer Node.js 20+ e pnpm 8+.
 
----
+```bash
+git clone https://github.com/MoisesVNdev/PDV-FiadoDigital.git
+cd PDV-FiadoDigital
+pnpm install
+cp apps/api/.env.example apps/api/.env      # preencha JWT_SECRET e JWT_REFRESH_SECRET
+pnpm db:migrate:deploy                      # aplica as migrações versionadas em prisma/migrations
+pnpm db:seed
+docker compose up
+```
 
-## Variáveis de Ambiente
+> `pnpm db:migrate` roda `prisma db push`, que sincroniza o schema **sem** gerar histórico. Use-o só para protótipos rápidos; o caminho normal é `db:migrate:deploy`.
 
-As configurações sensíveis ficam encapsuladas de forma central, com definições expostas que regulam a lógica ou conexão da infraestrutura local sem violar os hard-code sources.
+O `db:seed` cria um operador de demonstração para você testar o sistema:
+
+| Usuário | Senha | PIN gerencial |
+|---|---|---|
+| `admin` | `admin123` | `123456` |
+
+> ⚠️ São credenciais só para teste local. Troque-as em qualquer outro ambiente.
+
+<details><summary>Variáveis de ambiente</summary>
 
 | Variável | Obrigatória | Descrição |
 |---|---|---|
-| `JWT_SECRET` | ✅ | Chave de assinatura dos access tokens |
-| `JWT_REFRESH_SECRET` | ✅ | Chave de assinatura dos refresh tokens |
-| `DATABASE_URL` | ✅ | Caminho do arquivo SQLite (`file:./data/dev.db`) |
-| `NODE_ENV` | ✅ | Define as métricas e optimizações contextuais (`development` / `production`) |
-| `CORS_ORIGIN` | ✅ | Proteção origin da plataforma de request (ex: `http://localhost:5173`) |
-| `PORT` | - | Porta global de operação |
-| `APP_TIME_ZONE` | - | Formatação universal restrita no backend |
-| `PIX_KEY_TYPE` | - | Configuração do Pix |
-| `PIX_KEY` | - | Referência do pix do comércio |
-| `VITE_API_URL` | ✅ | URL resolvida pelo roteador Vue via proxy local, no path do workspace Frontend (`@pdv/web`). |
-| `VITE_WS_URL` | ✅ | Conector das instâncias e canais locais dos WebSockets no Frontend (`@pdv/web`). |
+| `JWT_SECRET` / `JWT_REFRESH_SECRET` | ✅ | Chaves de assinatura dos tokens |
+| `DATABASE_URL` | ✅ | Caminho do SQLite (`file:./data/dev.db`) |
+| `NODE_ENV` | ✅ | `development` ou `production` |
+| `CORS_ORIGIN` | ✅ | Origem permitida (ex.: `http://localhost:5173`) |
+| `PORT` | | Porta da API |
+| `APP_TIME_ZONE` | | Fuso horário usado nos relatórios |
+| `PIX_KEY_TYPE` / `PIX_KEY` | | Chave PIX do comércio |
+| `VITE_API_URL` / `VITE_WS_URL` | ✅ (web) | URLs da API e do WebSocket |
+</details>
 
 ---
 
-## Estrutura do Monorepo
+## Distribuição
+Em produção, o front roda empacotado com **Tauri** em modo quiosque. O empacotador fica em um repositório separado.
 
-O workspace localiza sua construção nos seguintes agrupadores primários (altíssimo nível estrutural):
-
-- `apps/api`
-- `apps/web`
-- `packages/shared`
-- `prisma/`
-- `.github/`
-- `docs/`
-
----
+## Roadmap
+Pendências e dívida técnica estão em [`docs/info-projeto/resumo-infraestrutura-projeto.md`](docs/info-projeto/resumo-infraestrutura-projeto.md).
 
 ## Contribuindo
+Veja o [guia de contribuição](CONTRIBUTING.md), o [código de conduta](CODE_OF_CONDUCT.md) e a [política de segurança](SECURITY.md).
 
-Temos padronização para integrar atualizações que regem um projeto saudável:
-
-- [Guia de Contribuição](.github/CONTRIBUTING.md) — `.github/CONTRIBUTING.md`
-- [Template de Pull Request](.github/PULL_REQUEST_TEMPLATE.md) — `.github/PULL_REQUEST_TEMPLATE.md`
-- Templates de issues listados na ramificação `.github/ISSUE_TEMPLATE/`
-- Instruções estruturais para interações orgânicas orientadas usando Inteligência Artificial estão organizadas no catálogo em `.github/copilot-instructions.md`.
-
----
-
-## Roadmap e Dívida Técnica
-
-Manutenções profundas, monitoramento e métricas analíticas de pendência e restabelecimento constam formalizados e orientados dentro da plataforma corporativa sob o documento central: `docs/info-projeto/resumo-infraestrutura-projeto.md` (no subgrupo logístico pertencente à sua referida "Seção 17"). A pendência avaliada abertamente em estágio mais recente diz respeito à demanda interna de escalação:  **P17.21**.
-
----
-
-## Autor e Licença
-
-- Autor: [Moisés Vila Nova De Oliveira](https://github.com/MoisesVNdev/MoisesVNdev) — moisesvn.dev@gmail.com
-- Licença: Projeto base encontra-se disponibilizado sob os ditames estruturais abertos [MIT](https://opensource.org/license/mit).
+## Autor e licença
+**Moisés Vila Nova de Oliveira**: [GitHub](https://github.com/MoisesVNdev) · [moisesvn.dev@gmail.com](mailto:moisesvn.dev@gmail.com)
+Licença [MIT](https://opensource.org/license/mit).
